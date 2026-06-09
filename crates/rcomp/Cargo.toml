@@ -1,0 +1,13 @@
+[package]
+name = "rcomp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "rcomp"
+path = "src/main.rs"
+
+[dependencies]
+rcomp-core = { path = "../rcomp-core" }
