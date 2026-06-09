@@ -16,6 +16,8 @@
 //! 7. Overwrite refusals (compress and extract directions).
 //! 8. Pre-cancelled token → Cancelled; no output left behind.
 //! 9. UnknownFormat on `compress(x, "out.weird")`.
+//! 10. **7z backend**: dir → `out.7z` → extract roundtrip, list, progress
+//!     invariant (bytes_total None throughout extraction).
 
 use std::{
     collections::HashSet,
@@ -676,22 +678,86 @@ fn compress_unknown_extension_returns_unknown_format() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. UnsupportedOperation for 7z and rar
+// 10. 7z backend — dir roundtrip, list, progress invariant
 // ---------------------------------------------------------------------------
 
 #[test]
-fn list_7z_returns_unsupported() {
-    // Create a fake file with 7z magic bytes.
-    let work = TempDir::new().unwrap();
-    let fake_7z = work.path().join("archive.7z");
-    // 7z magic: 37 7A BC AF 27 1C
-    std::fs::write(&fake_7z, [0x37u8, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 0, 0]).unwrap();
+fn compress_extract_7z_dir_roundtrip() {
+    let src = TempDir::new().unwrap();
+    build_test_tree(src.path());
 
-    let err = list(&fake_7z).expect_err("list on 7z should fail");
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("out.7z");
+    let dest = TempDir::new().unwrap();
+
+    compress(src.path(), &archive, &Default::default(), nop_progress)
+        .expect("7z compress should succeed");
+    extract(&archive, dest.path(), &Default::default(), nop_progress)
+        .expect("7z extract should succeed");
+
+    assert_test_tree(dest.path());
+
+    for rel in collect_relative_paths(src.path()) {
+        assert_file_bytes_equal(src.path(), dest.path(), &rel);
+    }
+}
+
+#[test]
+fn list_7z_matches_created_tree() {
+    let src = TempDir::new().unwrap();
+    build_test_tree(src.path());
+
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("tree.7z");
+
+    compress(src.path(), &archive, &Default::default(), nop_progress).unwrap();
+
+    let entries = list(&archive).expect("list on 7z should succeed");
+    let names: HashSet<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
+
     assert!(
-        matches!(err, Error::UnsupportedOperation { .. }),
-        "expected UnsupportedOperation, got {err:?}"
+        names.contains(Path::new("a.txt")),
+        "expected a.txt in 7z list; got {:?}",
+        names
     );
+    assert!(
+        names.contains(Path::new("sub/b.txt")),
+        "expected sub/b.txt in 7z list; got {:?}",
+        names
+    );
+}
+
+/// For 7z: bytes_total must be None for all progress snapshots (because 7z is
+/// random-access like zip and we reset bytes_total to None before extraction).
+#[test]
+fn extract_7z_progress_bytes_total_is_none() {
+    let src = TempDir::new().unwrap();
+    let data: Vec<u8> = (0u8..=255).cycle().take(128 * 1024).collect();
+    std::fs::write(src.path().join("big.bin"), &data).unwrap();
+
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("big.7z");
+    compress(src.path(), &archive, &Default::default(), nop_progress).unwrap();
+
+    let dest = TempDir::new().unwrap();
+    let mut snapshots: Vec<rcomp_core::Progress> = Vec::new();
+    extract(&archive, dest.path(), &Default::default(), |p| {
+        snapshots.push(p.clone());
+    })
+    .expect("7z extract should succeed");
+
+    assert!(
+        !snapshots.is_empty(),
+        "at least one progress snapshot must be emitted during 7z extraction"
+    );
+
+    for snap in &snapshots {
+        assert!(
+            snap.bytes_total.is_none(),
+            "7z extraction: bytes_total should be None but was {:?}",
+            snap.bytes_total,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -847,6 +913,146 @@ fn extract_zip_progress_bytes_total_is_none() {
             snap.bytes_total.is_none(),
             "zip extraction: bytes_total should be None but was {:?}",
             snap.bytes_total,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 15. RAR backend
+// ---------------------------------------------------------------------------
+
+/// Path to the RAR test fixture.
+///
+/// `tests/fixtures/sample.rar` is a copy of `version.rar` from the `unrar`
+/// crate's test data (tier b of the 3-tier fixture strategy; `rar` binary not
+/// present on this host).
+///
+/// Contents: one file named `VERSION` with content `"unrar-0.4.0"` (11 bytes).
+fn rar_fixture() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sample.rar")
+}
+
+/// RAR compress is always unsupported (RAR creation is proprietary).
+/// This test runs with or without the `rar` feature.
+#[test]
+fn rar_compress_always_unsupported() {
+    let src_dir = TempDir::new().unwrap();
+    std::fs::write(src_dir.path().join("file.txt"), b"data").unwrap();
+
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("out.rar");
+
+    let opts = CompressOptions {
+        format: Some(rcomp_core::Format {
+            container: Some(rcomp_core::Container::Rar),
+            codec: None,
+        }),
+        ..CompressOptions::default()
+    };
+
+    let err = compress(src_dir.path(), &archive, &opts, nop_progress)
+        .expect_err("rar compress should always return UnsupportedOperation");
+
+    assert!(
+        matches!(err, Error::UnsupportedOperation { .. }),
+        "expected UnsupportedOperation for rar compress, got {err:?}"
+    );
+}
+
+/// Without the `rar` feature, extract on a .rar file returns UnsupportedOperation
+/// whose message mentions the `rar` feature.
+#[cfg(not(feature = "rar"))]
+#[test]
+fn rar_extract_without_feature_returns_unsupported_mentioning_feature() {
+    let fixture = rar_fixture();
+    let dest = TempDir::new().unwrap();
+
+    let err = extract(&fixture, dest.path(), &Default::default(), nop_progress)
+        .expect_err("rar extract without feature should return UnsupportedOperation");
+
+    match err {
+        Error::UnsupportedOperation { ref operation, .. } => {
+            assert!(
+                operation.contains("rar"),
+                "UnsupportedOperation message should mention the `rar` feature; got operation={operation:?}"
+            );
+        }
+        other => panic!("expected UnsupportedOperation, got {other:?}"),
+    }
+}
+
+/// With the `rar` feature, extract the fixture and verify file contents.
+#[cfg(feature = "rar")]
+#[test]
+fn rar_extract_fixture_produces_correct_tree() {
+    let fixture = rar_fixture();
+    let dest = TempDir::new().unwrap();
+
+    let report = extract(&fixture, dest.path(), &Default::default(), nop_progress)
+        .expect("rar extract should succeed");
+    assert!(report.entries > 0, "should have extracted at least one entry");
+
+    // sample.rar contains VERSION with content "unrar-0.4.0".
+    let content = std::fs::read(dest.path().join("VERSION")).unwrap();
+    assert_eq!(content, b"unrar-0.4.0", "VERSION content mismatch");
+}
+
+/// With the `rar` feature, list the fixture and verify it matches extracted contents.
+#[cfg(feature = "rar")]
+#[test]
+fn rar_list_fixture_matches_extract() {
+    let fixture = rar_fixture();
+
+    let entries = list(&fixture).expect("rar list should succeed");
+    assert_eq!(entries.len(), 1, "expected 1 entry in list; got {:?}", entries);
+    assert_eq!(entries[0].path, Path::new("VERSION"));
+    assert!(!entries[0].is_dir, "VERSION should not be a directory");
+    assert_eq!(entries[0].size, 11, "VERSION size should be 11 bytes");
+}
+
+/// With the `rar` feature, extract twice with overwrite=false → AlreadyExists.
+#[cfg(feature = "rar")]
+#[test]
+fn rar_extract_overwrite_false_returns_already_exists() {
+    let fixture = rar_fixture();
+
+    let dest = TempDir::new().unwrap();
+    // First extract succeeds.
+    extract(&fixture, dest.path(), &Default::default(), nop_progress).expect("first extract");
+
+    // Second extract with overwrite=false must return AlreadyExists.
+    let err = extract(&fixture, dest.path(), &Default::default(), nop_progress)
+        .expect_err("second extract should return AlreadyExists");
+
+    assert!(
+        matches!(err, Error::AlreadyExists { .. }),
+        "expected AlreadyExists on second extract, got {err:?}"
+    );
+}
+
+/// With the `rar` feature, extraction progress must have bytes_total = None.
+#[cfg(feature = "rar")]
+#[test]
+fn rar_extract_progress_bytes_total_is_none() {
+    let fixture = rar_fixture();
+    let dest = TempDir::new().unwrap();
+
+    let mut snapshots: Vec<rcomp_core::Progress> = Vec::new();
+    extract(&fixture, dest.path(), &Default::default(), |p| {
+        snapshots.push(p.clone());
+    })
+    .expect("rar extract should succeed");
+
+    assert!(
+        !snapshots.is_empty(),
+        "at least one progress snapshot must be emitted during rar extraction"
+    );
+    for snap in &snapshots {
+        assert!(
+            snap.bytes_total.is_none(),
+            "rar extraction: bytes_total should be None but was {:?}",
+            snap.bytes_total
         );
     }
 }
