@@ -5,6 +5,24 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `crates/rcomp-core/src/archive/tar.rs` + `archive/zip.rs` (extract)
+  **What:** Directory permissions are not restored on extraction (only regular
+  files get their unix mode back). Restoring dir modes correctly requires
+  applying them *after* all children are written (a read-only dir would block
+  its own children otherwise) — the zip crate uses that two-phase pattern in
+  its own extract.
+  **Fix:** Milestone 6 hardening: collect (dir, mode) pairs during extraction,
+  apply in reverse-depth order at the end, for both backends.
+
+- **Where:** `crates/rcomp-core/src/ops.rs` (`extract`, zip branch)
+  **What:** Zip extraction reports `bytes_total = None` (documented): the zip
+  backend is `&Path`-based, so there's no compressed-bytes counting reader as
+  with the streamed formats. Progress bars for zip will be spinner-style
+  (count of bytes written, no percentage).
+  **Fix:** Acceptable for V1 CLI. If percent-accurate zip progress is wanted
+  later, sum entry compressed sizes from the central directory and count
+  per-entry consumption instead.
+
 - **Where:** `crates/rcomp-core/src/codec/brotli.rs` (format property, not a bug)
   **What:** Brotli has no magic bytes *and* no content checksum, so a corrupted
   `.br` stream can decode "successfully" into wrong bytes instead of erroring
