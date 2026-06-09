@@ -13,6 +13,9 @@ liblzma = { workspace = true }
 zstd = { workspace = true }
 lz4 = { workspace = true }
 brotli = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+filetime = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

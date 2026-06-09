@@ -1,6 +1,7 @@
 //! Progress reporting, cancellation token, and operation report types.
 
 use std::{
+    io::{Read, Write},
     path::PathBuf,
     sync::{
         Arc,
@@ -8,6 +9,8 @@ use std::{
     },
     time::Duration,
 };
+
+use crate::archive::OpCtx;
 
 /// A snapshot of progress for a running compress or extract operation.
 ///
@@ -88,6 +91,52 @@ pub struct Entry {
     pub is_dir: bool,
 }
 
+// ---------------------------------------------------------------------------
+// copy_with_progress
+// ---------------------------------------------------------------------------
+
+/// Copy bytes from `r` to `w` in 64 KiB chunks, reporting progress and
+/// honouring cancellation on every iteration.
+///
+/// After each successful read chunk the function:
+///
+/// 1. Checks [`OpCtx::check_cancel`]; returns [`crate::Error::Cancelled`] if
+///    the token has been signalled.
+/// 2. Writes the chunk to `w`.
+/// 3. Calls [`OpCtx::add_bytes`] to advance `bytes_done` and fire the
+///    `on_progress` callback.
+///
+/// Returns the total number of bytes copied.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::Cancelled`] if the cancel token fires between
+/// iterations, or [`crate::Error::Io`] for underlying I/O failures.
+pub(crate) fn copy_with_progress(
+    r: &mut dyn Read,
+    w: &mut dyn Write,
+    ctx: &mut OpCtx<'_>,
+) -> crate::Result<u64> {
+    const BUF_SIZE: usize = 64 * 1024; // 64 KiB
+    let mut buf = [0u8; BUF_SIZE];
+    let mut total: u64 = 0;
+
+    loop {
+        // Check cancellation before attempting a read.
+        ctx.check_cancel()?;
+
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        w.write_all(&buf[..n])?;
+        ctx.add_bytes(n as u64);
+        total += n as u64;
+    }
+
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +211,71 @@ mod tests {
             duration: Duration::from_nanos(1),
         };
         assert!(report.ratio() > 1.0);
+    }
+
+    // --- copy_with_progress ---
+
+    #[test]
+    fn copy_with_progress_pre_cancelled_returns_cancelled() {
+        use crate::archive::OpCtx;
+
+        let token = CancelToken::default();
+        // Signal cancellation before any bytes are available.
+        token.cancel();
+
+        let mut progress_calls: u64 = 0;
+        let mut ctx = OpCtx {
+            cancel: token,
+            on_progress: &mut |_p| {
+                progress_calls += 1;
+            },
+            progress: Progress {
+                bytes_done: 0,
+                bytes_total: None,
+                current_entry: None,
+            },
+        };
+
+        let data = b"hello world";
+        let mut src: &[u8] = data;
+        let mut dst = Vec::new();
+
+        let result = super::copy_with_progress(&mut src, &mut dst, &mut ctx);
+        assert!(
+            matches!(result, Err(crate::Error::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+        // No bytes must have been written.
+        assert!(dst.is_empty(), "no bytes should be written after a pre-cancel");
+        // No progress callbacks should have fired.
+        assert_eq!(progress_calls, 0);
+    }
+
+    #[test]
+    fn copy_with_progress_copies_all_bytes() {
+        use crate::archive::OpCtx;
+
+        let token = CancelToken::default();
+        let mut bytes_reported: u64 = 0;
+        let mut ctx = OpCtx {
+            cancel: token,
+            on_progress: &mut |p| {
+                bytes_reported = p.bytes_done;
+            },
+            progress: Progress {
+                bytes_done: 0,
+                bytes_total: None,
+                current_entry: None,
+            },
+        };
+
+        let data = b"hello world - copy_with_progress test payload";
+        let mut src: &[u8] = data;
+        let mut dst = Vec::new();
+
+        let n = super::copy_with_progress(&mut src, &mut dst, &mut ctx).unwrap();
+        assert_eq!(n, data.len() as u64);
+        assert_eq!(&dst, data);
+        assert_eq!(bytes_reported, data.len() as u64);
     }
 }

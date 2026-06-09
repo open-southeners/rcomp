@@ -18,6 +18,10 @@ pub enum Error {
     #[error("operation cancelled")]
     Cancelled,
 
+    /// The output path already exists and the caller did not enable overwrite.
+    #[error("output already exists: {path}")]
+    AlreadyExists { path: PathBuf },
+
     /// An archive entry's path resolves outside the destination directory
     /// (zip-slip / path-traversal attack).
     #[error("archive entry escapes destination: {entry}")]
@@ -57,6 +61,14 @@ mod tests {
     #[test]
     fn cancelled_displays_message() {
         assert_eq!(Error::Cancelled.to_string(), "operation cancelled");
+    }
+
+    #[test]
+    fn already_exists_displays_path() {
+        let err = Error::AlreadyExists {
+            path: PathBuf::from("output.tar.gz"),
+        };
+        assert!(err.to_string().contains("output.tar.gz"));
     }
 
     #[test]

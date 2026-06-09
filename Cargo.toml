@@ -17,3 +17,6 @@ liblzma = { version = "0.4.6", features = ["parallel"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 lz4 = "1.28.1"
 brotli = "8.0.3"
+tar = "0.4.46"
+zip = "8.6.0"
+filetime = "0.2"
