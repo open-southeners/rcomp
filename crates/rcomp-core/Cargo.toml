@@ -16,6 +16,11 @@ brotli = { workspace = true }
 tar = { workspace = true }
 zip = { workspace = true }
 filetime = { workspace = true }
+sevenz-rust2 = { workspace = true }
+unrar = { workspace = true, optional = true }
+
+[features]
+rar = ["dep:unrar"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,8 +1,9 @@
 //! Archive backend dispatch layer.
 //!
-//! This module wires together the two archive backends ([`tar`] and [`zip`]),
-//! the shared entry-path sanitizer, and the `OpCtx` helper that threads
-//! cancellation and progress reporting through every low-level operation.
+//! This module wires together the archive backends ([`tar`], [`zip`],
+//! [`sevenz`], and optionally [`rar`]), the shared entry-path sanitizer, and
+//! the `OpCtx` helper that threads cancellation and progress reporting through
+//! every low-level operation.
 //!
 //! # Design overview
 //!
@@ -13,9 +14,11 @@
 //! - **[`sanitize`]** — validates archive entry paths and symlink targets
 //!   against path-traversal (zip-slip) attacks before anything is written to
 //!   disk.
-//! - **[`tar`] / [`zip`]** — per-format backends; each exposes `create`,
-//!   `extract`, and `list` with the signatures specified in the shared
-//!   contract.
+//! - **[`tar`] / [`zip`] / [`sevenz`]** — per-format backends; each exposes
+//!   `create`, `extract`, and `list` with the signatures specified in the
+//!   shared contract.
+//! - **[`rar`]** — extract-only RAR backend, available when the `rar` cargo
+//!   feature is enabled.  RAR creation is proprietary and always unsupported.
 
 use crate::{
     Error, Result,
@@ -23,8 +26,12 @@ use crate::{
 };
 
 pub(crate) mod sanitize;
+pub(crate) mod sevenz;
 pub(crate) mod tar;
 pub(crate) mod zip;
+
+#[cfg(feature = "rar")]
+pub(crate) mod rar;
 
 // ---------------------------------------------------------------------------
 // OpCtx

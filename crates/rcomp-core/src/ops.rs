@@ -50,6 +50,7 @@ use crate::{
     Codec, Container, Error, Format, Level, Result,
     archive::{
         OpCtx,
+        sevenz,
         tar,
         zip,
     },
@@ -57,6 +58,9 @@ use crate::{
     detect::{detect, detect_from_extension},
     progress::{CancelToken, Entry, Progress, Report, copy_with_progress},
 };
+
+#[cfg(feature = "rar")]
+use crate::archive::rar;
 
 // ---------------------------------------------------------------------------
 // Public option structs
@@ -131,7 +135,8 @@ pub struct ExtractOptions {
 ///
 /// - [`Error::UnknownFormat`] — no format could be inferred.
 /// - [`Error::AlreadyExists`] — output exists and `opts.overwrite` is false.
-/// - [`Error::UnsupportedOperation`] — format is 7z or rar.
+/// - [`Error::UnsupportedOperation`] — format is rar (rar creation is always
+///   unsupported; enable the `rar` feature for extraction only).
 /// - [`Error::Cancelled`] — cancel token fired.
 /// - [`Error::Io`] — underlying I/O failure.
 pub fn compress(
@@ -164,8 +169,10 @@ pub fn compress(
         format = Format::layered(Container::Tar, codec);
     }
 
-    // --- Unsupported formats (milestone 4) ---
-    if let Some(Container::SevenZ | Container::Rar) = format.container {
+    // --- Unsupported formats ---
+    // RAR creation is proprietary and always unsupported.
+    // SevenZ is now supported via the sevenz backend.
+    if let Some(Container::Rar) = format.container {
         return Err(Error::UnsupportedOperation {
             format: format.to_string(),
             operation: "compress".into(),
@@ -231,6 +238,12 @@ fn do_compress(
     input_bytes_total: u64,
 ) -> Result<(u64, u64)> {
     match (format.container, format.codec) {
+        // 7z container (no codec layer — 7z carries its own LZMA2 codec).
+        (Some(Container::SevenZ), None) => {
+            let entries = sevenz::create(input, output, level, ctx)?;
+            Ok((entries, input_bytes_total))
+        }
+
         // Zip container (no codec layer).
         (Some(Container::Zip), None) => {
             let entries = zip::create(input, output, level, ctx)?;
@@ -323,16 +336,17 @@ fn do_compress(
 /// of the compressed stream processed.  Invariant: every [`Progress`] callback
 /// satisfies `bytes_total.is_none() || bytes_done <= bytes_total`.
 ///
-/// **zip:** Because zip is random-access (file-based) there is no single
-/// compressed-byte stream to count.  `bytes_total` is set to `None` for zip
-/// extraction so the invariant above is preserved even though `bytes_done`
-/// reflects decompressed bytes in that case.
+/// **zip / 7z:** Because these formats are random-access (file-based) there is
+/// no single compressed-byte stream to count.  `bytes_total` is set to `None`
+/// for zip and 7z extraction so the invariant above is preserved even though
+/// `bytes_done` reflects decompressed bytes in that case.
 ///
 /// # Errors
 ///
 /// - [`Error::UnknownFormat`] — format cannot be detected.
 /// - [`Error::AlreadyExists`] — an output file exists and `opts.overwrite` is false.
-/// - [`Error::UnsupportedOperation`] — format is 7z or rar.
+/// - [`Error::UnsupportedOperation`] — format is rar (without the `rar`
+///   feature enabled).
 /// - [`Error::Cancelled`] — cancel token fired.
 /// - [`Error::Io`] — underlying I/O failure.
 pub fn extract(
@@ -350,11 +364,14 @@ pub fn extract(
         detect(input)?
     };
 
-    // --- Unsupported formats ---
-    if let Some(Container::SevenZ | Container::Rar) = format.container {
+    // --- Unsupported formats (feature-gated) ---
+    // When the `rar` feature is disabled, RAR extraction is unsupported.
+    // When enabled, extraction is dispatched below via do_extract.
+    #[cfg(not(feature = "rar"))]
+    if let Some(Container::Rar) = format.container {
         return Err(Error::UnsupportedOperation {
             format: format.to_string(),
-            operation: "extract".into(),
+            operation: "extract — enable the `rar` feature to extract RAR archives".into(),
         });
     }
 
@@ -414,6 +431,30 @@ fn do_extract(
     ctx: &mut OpCtx<'_>,
 ) -> Result<(u64, u64)> {
     match (format.container, format.codec) {
+        // RAR container (extract-only; creation is always unsupported).
+        //
+        // unrar drives its own file I/O so there is no compressed-byte stream
+        // to wrap.  Reset bytes_total to None consistent with zip and 7z.
+        #[cfg(feature = "rar")]
+        (Some(Container::Rar), None) => {
+            ctx.progress.bytes_total = None;
+            let entries = rar::extract(input, dest, overwrite, ctx)?;
+            let input_bytes = fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+            Ok((entries, input_bytes))
+        }
+
+        // 7z container.
+        //
+        // 7z is random-access (file-based) so we cannot wrap the stream in a
+        // counting reader.  Reset bytes_total to None to prevent bytes_done
+        // (decompressed) from ever exceeding it.  Consistent with zip.
+        (Some(Container::SevenZ), None) => {
+            ctx.progress.bytes_total = None;
+            let entries = sevenz::extract(input, dest, overwrite, ctx)?;
+            let input_bytes = fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+            Ok((entries, input_bytes))
+        }
+
         // Zip container.
         //
         // Zip is random-access (file-based) so we cannot wrap the stream in a
@@ -534,8 +575,9 @@ fn do_extract(
 /// |---|---|
 /// | `.zip` | yes |
 /// | `.tar`, `.tar.*` | yes |
+/// | `.7z` | yes |
 /// | codec-only (`.gz`, `.bz2`, …) | [`Error::UnsupportedOperation`] |
-/// | `.7z`, `.rar` | [`Error::UnsupportedOperation`] (milestone 4) |
+/// | `.rar` | [`Error::UnsupportedOperation`] (enable the `rar` feature) |
 ///
 /// # Errors
 ///
@@ -545,6 +587,13 @@ pub fn list(archive: &Path) -> Result<Vec<Entry>> {
     let format = detect(archive)?;
 
     match (format.container, format.codec) {
+        // RAR container (list-only; creation is always unsupported).
+        #[cfg(feature = "rar")]
+        (Some(Container::Rar), None) => rar::list(archive),
+
+        // 7z container.
+        (Some(Container::SevenZ), None) => sevenz::list(archive),
+
         // Zip container.
         (Some(Container::Zip), None) => zip::list(archive),
 
@@ -560,10 +609,20 @@ pub fn list(archive: &Path) -> Result<Vec<Entry>> {
         }
 
         // Codec-only and unsupported container formats.
-        _ => Err(Error::UnsupportedOperation {
-            format: format.to_string(),
-            operation: "list".into(),
-        }),
+        // RAR without the rar feature falls through here.
+        _ => {
+            if let Some(Container::Rar) = format.container {
+                Err(Error::UnsupportedOperation {
+                    format: format.to_string(),
+                    operation: "list — enable the `rar` feature to list RAR archives".into(),
+                })
+            } else {
+                Err(Error::UnsupportedOperation {
+                    format: format.to_string(),
+                    operation: "list".into(),
+                })
+            }
+        }
     }
 }
 
