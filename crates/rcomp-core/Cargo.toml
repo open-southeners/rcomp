@@ -7,6 +7,12 @@ description.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+flate2 = { workspace = true }
+bzip2 = { workspace = true }
+liblzma = { workspace = true }
+zstd = { workspace = true }
+lz4 = { workspace = true }
+brotli = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
