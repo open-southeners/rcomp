@@ -262,6 +262,12 @@ pub(crate) fn extract(
     let mut archive = Archive::new(r);
     let mut count: u64 = 0;
 
+    // Collect (out_path, unix_mode) pairs for directories so we can apply
+    // their permissions after all entries are written.  A read-only directory
+    // would otherwise block writing its own children.
+    #[cfg(unix)]
+    let mut dir_modes: Vec<(PathBuf, u32)> = Vec::new();
+
     let entries = archive.entries()?;
     for entry_result in entries {
         let mut entry = entry_result?;
@@ -278,6 +284,11 @@ pub(crate) fn extract(
 
         if entry_type.is_dir() {
             fs::create_dir_all(&out_path)?;
+            // Collect the directory mode for deferred application.
+            #[cfg(unix)]
+            if let Ok(mode) = entry.header().mode() {
+                dir_modes.push((out_path.clone(), mode));
+            }
         } else if entry_type.is_file() {
             // Ensure parent directory exists.
             if let Some(parent) = out_path.parent() {
@@ -367,6 +378,19 @@ pub(crate) fn extract(
         }
 
         count += 1;
+    }
+
+    // Apply collected directory modes deepest-first (longest path first) so
+    // that a read-only parent does not prevent writes to its own children.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Sort by descending component depth so deepest directories are
+        // chmod'd first.  Use path length as a fast proxy for depth.
+        dir_modes.sort_by(|a, b| b.0.as_os_str().len().cmp(&a.0.as_os_str().len()));
+        for (dir_path, mode) in dir_modes {
+            fs::set_permissions(&dir_path, fs::Permissions::from_mode(mode))?;
+        }
     }
 
     Ok(count)

@@ -328,6 +328,12 @@ pub(crate) fn extract(
     let mut zip = ZipArchive::new(file).map_err(|e| io::Error::other(e.to_string()))?;
     let mut count: u64 = 0;
 
+    // Collect (out_path, unix_mode) pairs for directories so we can apply
+    // their permissions after all entries are written.  A read-only directory
+    // would otherwise block writing its own children.
+    #[cfg(unix)]
+    let mut dir_modes: Vec<(PathBuf, u32)> = Vec::new();
+
     for idx in 0..zip.len() {
         // We take the entry name first, then re-open it for reading.
         // The borrow checker requires us to close the ZipFile before calling
@@ -353,6 +359,15 @@ pub(crate) fn extract(
 
         if is_dir {
             fs::create_dir_all(&out_path)?;
+            // Collect the directory mode for deferred application.
+            #[cfg(unix)]
+            if let Some(mode) = unix_mode {
+                // Only restore the lower 12 bits (type + permissions).
+                let perm_bits = mode & 0o7777;
+                if perm_bits != 0 {
+                    dir_modes.push((out_path.clone(), perm_bits));
+                }
+            }
         } else if is_symlink {
             // Symlink entries store the target path as the file body.
             let target_bytes = {
@@ -412,6 +427,19 @@ pub(crate) fn extract(
         }
 
         count += 1;
+    }
+
+    // Apply collected directory modes deepest-first (longest path first) so
+    // that a read-only parent does not prevent writes to its own children.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Sort by descending component depth so deepest directories are
+        // chmod'd first.  Use path length as a fast proxy for depth.
+        dir_modes.sort_by(|a, b| b.0.as_os_str().len().cmp(&a.0.as_os_str().len()));
+        for (dir_path, mode) in dir_modes {
+            fs::set_permissions(&dir_path, fs::Permissions::from_mode(mode))?;
+        }
     }
 
     Ok(count)
