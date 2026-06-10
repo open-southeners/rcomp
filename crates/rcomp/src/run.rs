@@ -7,6 +7,7 @@
 //! format work.
 
 use std::{
+    fs,
     io::{self, IsTerminal, Write as _},
     path::{Path, PathBuf},
 };
@@ -21,6 +22,28 @@ use rcomp_core::{
 use crate::cli::{Cli, SubCommand};
 use crate::infer::{InferFacts, Mode, infer_mode};
 use crate::ui;
+
+// ---------------------------------------------------------------------------
+// UsageError — maps to exit 2 in main.rs
+// ---------------------------------------------------------------------------
+
+/// A usage error that the CLI surface detected (not an inference ambiguity).
+///
+/// `main.rs` downcasts for this type alongside [`crate::infer::AmbiguityError`]
+/// and exits with code 2.
+#[derive(Debug)]
+pub struct UsageError {
+    /// Human-readable description of the problem.
+    pub message: String,
+}
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for UsageError {}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -70,6 +93,15 @@ pub fn run(cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     };
 
     let mode = infer_mode(&facts)?;
+
+    // Compress-only flags on an extract operation are a usage error (exit 2).
+    if mode == Mode::Extract && (cli.checksum || cli.all || !cli.exclude.is_empty()) {
+        return Err(anyhow::Error::new(UsageError {
+            message: "--checksum, --all, and --exclude apply to compression only \
+                      and cannot be used when extracting"
+                .to_owned(),
+        }));
+    }
 
     match mode {
         Mode::Compress => cmd_compress(input, output_str, cli, cancel),
@@ -126,11 +158,25 @@ fn cmd_compress(
         }
     }
 
+    // Sidecar pre-flight: if --checksum is requested and <output>.sha256
+    // already exists without --force, refuse before doing any work.
+    let sidecar_path = PathBuf::from(format!("{output_str}.sha256"));
+    if cli.checksum && sidecar_path.exists() && !cli.force {
+        return Err(anyhow::anyhow!(
+            "sidecar `{}` already exists\nhint: use --force to overwrite `{}`",
+            sidecar_path.display(),
+            sidecar_path.display(),
+        ));
+    }
+
     let opts = CompressOptions {
         format,
         level: cli.level(),
         overwrite: cli.force,
         cancel,
+        checksum: cli.checksum,
+        follow_gitignore: !cli.all,
+        exclude: cli.exclude.clone(),
     };
 
     let mut prog = ui::build(cli.quiet);
@@ -144,11 +190,46 @@ fn cmd_compress(
         std::process::exit(1);
     }
 
+    // Map InvalidGlob → UsageError (exit 2).
+    if let Err(CoreError::InvalidGlob { ref pattern, ref message }) = result {
+        return Err(anyhow::Error::new(UsageError {
+            message: format!("invalid glob pattern `{pattern}`: {message}"),
+        }));
+    }
+
     let report = result.map_err(|e| map_core_error(e, "compress"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
 
+    // Write the sidecar when --checksum was requested.
+    if let Some(ref artifact_hex) = report.sha256 {
+        write_sidecar(&sidecar_path, output, artifact_hex, report.content_sha256.as_deref())
+            .context("failed to write checksum sidecar")?;
+    }
+
     if !cli.quiet {
         print_compress_summary(output_str, &report);
+
+        // Show the artifact digest after the summary line.
+        if let Some(ref hex) = report.sha256 {
+            println!("sha256: {hex}");
+        }
+    }
+
+    // Print excluded-paths note to stderr (advisory; shown unless -q).
+    if !cli.quiet && report.entries_excluded > 0 {
+        let n = report.entries_excluded;
+        // Choose wording from which exclusion sources were CONFIGURED.
+        let note = if !cli.all && !cli.exclude.is_empty() {
+            // Both gitignore (follow_gitignore=true) and --exclude active.
+            format!("excluded {n} paths via .gitignore and --exclude")
+        } else if cli.all {
+            // follow_gitignore=false but --exclude was given.
+            format!("excluded {n} paths via --exclude")
+        } else {
+            // Only gitignore filtering (no --exclude).
+            format!("excluded {n} paths via .gitignore (use --all to include)")
+        };
+        eprintln!("{note}");
     }
 
     Ok(())
@@ -206,6 +287,23 @@ fn cmd_extract(
     cli: &Cli,
     cancel: CancelToken,
 ) -> anyhow::Result<()> {
+    // Parse the sidecar BEFORE the wrap-decision list() call.
+    //
+    // A sidecar alongside the archive is a promise: if it exists but cannot be
+    // parsed, that is an error.  When absent, verification is skipped entirely
+    // (exactly today's behaviour).
+    let sidecar_path = {
+        let mut p = input.as_os_str().to_os_string();
+        p.push(".sha256");
+        PathBuf::from(p)
+    };
+    let (verify_sha256, verify_content_sha256) = if sidecar_path.exists() {
+        parse_sidecar(input, &sidecar_path)?
+    } else {
+        (None, None)
+    };
+    let has_sidecar = verify_sha256.is_some();
+
     // Wrap decision: call list() to inspect the archive's top-level entries.
     //
     // - Ok(entries): count distinct first-path-components.
@@ -249,6 +347,8 @@ fn cmd_extract(
         format: cli.algo,
         overwrite: cli.force,
         cancel,
+        verify_sha256,
+        verify_content_sha256,
     };
 
     let mut prog = ui::build(cli.quiet);
@@ -262,8 +362,22 @@ fn cmd_extract(
         std::process::exit(1);
     }
 
+    // Map ChecksumMismatch → clear message, exit 1.
+    if let Err(CoreError::ChecksumMismatch { kind, ref expected, ref actual }) = result {
+        drop(prog.guard);
+        eprintln!(
+            "error: checksum mismatch ({kind}): expected {expected}, got {actual}"
+        );
+        std::process::exit(1);
+    }
+
     let report = result.map_err(|e| map_core_error(e, "extract"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
+
+    // Print verification note to stderr when a sidecar was used (not under -q).
+    if has_sidecar && !cli.quiet {
+        eprintln!("verified sha256");
+    }
 
     if !cli.quiet {
         print_extract_summary(&effective_dest, &report);
@@ -309,6 +423,136 @@ fn cmd_ls(archive: &Path, quiet: bool) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Write a `sha256sum`-compatible sidecar file at `sidecar_path`.
+///
+/// Format:
+///
+/// ```text
+/// # content-sha256: <hex>          ← only when content_hex is Some
+/// <artifact_hex>  <output_file_name>
+/// ```
+///
+/// The two-space separator between the digest and filename is the standard
+/// `sha256sum` output format so that `sha256sum -c <sidecar>` works.
+fn write_sidecar(
+    sidecar_path: &Path,
+    output: &Path,
+    artifact_hex: &str,
+    content_hex: Option<&str>,
+) -> anyhow::Result<()> {
+    let file_name = output
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    let mut text = String::new();
+    if let Some(chex) = content_hex {
+        text.push_str(&format!("# content-sha256: {chex}\n"));
+    }
+    text.push_str(&format!("{artifact_hex}  {file_name}\n"));
+
+    fs::write(sidecar_path, text.as_bytes())?;
+    Ok(())
+}
+
+/// Parse a `sha256sum`-style sidecar file and extract the digests for `input`.
+///
+/// Accepted line forms:
+/// - `# content-sha256: <hex>` — optional comment carrying the content digest.
+/// - `<hex>  <filename>` or `<hex> *<filename>` — artifact line; the filename
+///   field must match `input.file_name()`.  Unrelated artifact lines (other
+///   archive names) are tolerated and ignored.
+///
+/// Returns `(verify_sha256, verify_content_sha256)`.
+///
+/// # Errors
+///
+/// Returns an error (exit 1) when:
+/// - No line matches the input's file name (the sidecar is a promise).
+/// - Any artifact line has a malformed digest (not 64 lowercase hex chars).
+fn parse_sidecar(
+    input: &Path,
+    sidecar_path: &Path,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let raw = fs::read_to_string(sidecar_path)
+        .with_context(|| format!("failed to read sidecar `{}`", sidecar_path.display()))?;
+
+    let input_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    let mut artifact_hex: Option<String> = None;
+    let mut content_hex: Option<String> = None;
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Comment line: `# content-sha256: <hex>`
+        if let Some(rest) = line.strip_prefix("# content-sha256:") {
+            let hex = rest.trim().to_owned();
+            if !is_sha256_hex(&hex) {
+                bail!(
+                    "sidecar `{}` has a malformed content-sha256 comment: `{line}`",
+                    sidecar_path.display()
+                );
+            }
+            content_hex = Some(hex);
+            continue;
+        }
+
+        // Skip other comment lines.
+        if line.starts_with('#') {
+            continue;
+        }
+
+        // Artifact line: `<64-hex>  <filename>` or `<64-hex> *<filename>`.
+        //
+        // The standard sha256sum format uses two spaces for text mode and
+        // `<hex> *<name>` for binary mode.  We accept both.
+        let Some((hex_part, rest)) = line.split_once(' ') else {
+            // Not a recognised artifact line format — skip silently.
+            continue;
+        };
+        let name_part = if let Some(n) = rest.strip_prefix('*') {
+            n
+        } else {
+            rest.trim_start_matches(' ')
+        };
+
+        if name_part != input_name {
+            // Different file — a multi-archive sidecar; tolerate and skip.
+            continue;
+        }
+
+        // This line matches our input file.
+        if !is_sha256_hex(hex_part) {
+            bail!(
+                "sidecar `{}` contains a malformed SHA-256 digest for `{input_name}`: `{hex_part}`",
+                sidecar_path.display()
+            );
+        }
+        artifact_hex = Some(hex_part.to_owned());
+    }
+
+    match artifact_hex {
+        None => bail!(
+            "sidecar `{}` exists but contains no line for `{input_name}` \
+             — the sidecar is required when present",
+            sidecar_path.display()
+        ),
+        Some(hex) => Ok((Some(hex), content_hex)),
+    }
+}
+
+/// Return `true` if `s` is exactly 64 lowercase hexadecimal characters.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
 
 /// Count the number of distinct first-path-components across all entries.
 ///

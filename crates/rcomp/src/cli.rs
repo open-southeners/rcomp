@@ -3,7 +3,7 @@
 //! Defines [`Cli`] (the top-level parser) and [`SubCommand`] with the `ls`,
 //! `completions`, and `man` subcommands.
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::Shell;
 use rcomp_core::{Format, Level};
 
@@ -68,6 +68,37 @@ pub struct Cli {
     /// Extract entries directly into the destination (skip the auto-wrap folder).
     #[arg(long)]
     pub unwrap: bool,
+
+    /// Write a sha256sum-format sidecar `<OUTPUT>.sha256` next to the output
+    /// and print the artifact digest in the summary.
+    ///
+    /// On extraction, a sidecar is auto-verified when found — no flag required.
+    /// This flag applies to compression only; passing it on an extract operation
+    /// is a usage error (exit 2).
+    #[arg(long)]
+    pub checksum: bool,
+
+    /// Ignore .gitignore rules: include every file in the input folder,
+    /// `.git` included.
+    ///
+    /// By default folder inputs are walked with full git semantics — the origin
+    /// `.gitignore` and nested `.gitignore` files are honoured, and the `.git`
+    /// directory is excluded.  `--all` disables all of that.
+    ///
+    /// Applies to compression only; passing it on an extract operation is a
+    /// usage error (exit 2).
+    #[arg(long)]
+    pub all: bool,
+
+    /// Exclude paths matching a gitignore-style glob, relative to the input
+    /// folder.  May be repeated.  Works with or without `--all`.
+    ///
+    /// Example: `--exclude 'target/' --exclude '*.log'`
+    ///
+    /// Applies to compression only; passing it on an extract operation is a
+    /// usage error (exit 2).  An invalid glob is also a usage error (exit 2).
+    #[arg(long, value_name = "GLOB", action = ArgAction::Append)]
+    pub exclude: Vec<String>,
 
     /// Auto-accept all confirmation prompts (non-interactive / script use).
     #[arg(short = 'y', long)]

@@ -38,8 +38,10 @@ fn main() {
     match run::run(&cli, cancel) {
         Ok(()) => {}
         Err(e) => {
-            // Check for ambiguity errors → exit 2.
-            if e.downcast_ref::<infer::AmbiguityError>().is_some() {
+            // Check for usage errors → exit 2.
+            if e.downcast_ref::<infer::AmbiguityError>().is_some()
+                || e.downcast_ref::<run::UsageError>().is_some()
+            {
                 eprintln!("error: {e}");
                 std::process::exit(2);
             }
