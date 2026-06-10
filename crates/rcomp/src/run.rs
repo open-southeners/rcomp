@@ -14,7 +14,7 @@ use std::{
 use anyhow::{Context, bail};
 use indicatif::HumanBytes;
 use rcomp_core::{
-    CompressOptions, Error as CoreError, ExtractOptions, Format, Report,
+    CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report,
     compress, detect, extract, list, split_format_suffix,
 };
 
@@ -28,10 +28,15 @@ use crate::ui;
 
 /// Run the operation described by `cli`.
 ///
+/// `cancel` is a shared [`CancelToken`] that has already been wired to the
+/// process's SIGINT handler in `main.rs`.  It is forwarded into every
+/// compress/extract call so that Ctrl-C causes the operation to unwind
+/// through [`CoreError::Cancelled`] (cleaning up partial output).
+///
 /// Returns `Ok(())` on success or an `anyhow::Error` whose root cause may be
 /// [`CoreError`] or [`AmbiguityError`].  `main.rs` maps the error to the
 /// appropriate exit code.
-pub fn run(cli: &Cli) -> anyhow::Result<()> {
+pub fn run(cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     // Subcommands bypass the inference path entirely.
     match &cli.command {
         Some(SubCommand::Ls { archive }) => return cmd_ls(Path::new(archive), cli.quiet),
@@ -67,10 +72,10 @@ pub fn run(cli: &Cli) -> anyhow::Result<()> {
     let mode = infer_mode(&facts)?;
 
     match mode {
-        Mode::Compress => cmd_compress(input, output_str, cli),
+        Mode::Compress => cmd_compress(input, output_str, cli, cancel),
         Mode::Extract => {
             let dest = output_str.unwrap_or(".");
-            cmd_extract(input, Path::new(dest), cli)
+            cmd_extract(input, Path::new(dest), cli, cancel)
         }
     }
 }
@@ -79,7 +84,12 @@ pub fn run(cli: &Cli) -> anyhow::Result<()> {
 // Compress
 // ---------------------------------------------------------------------------
 
-fn cmd_compress(input: &Path, output_str: Option<&str>, cli: &Cli) -> anyhow::Result<()> {
+fn cmd_compress(
+    input: &Path,
+    output_str: Option<&str>,
+    cli: &Cli,
+    cancel: CancelToken,
+) -> anyhow::Result<()> {
     // OUTPUT is required for compress.
     let output_str = output_str.ok_or_else(|| {
         anyhow::anyhow!(
@@ -120,13 +130,21 @@ fn cmd_compress(input: &Path, output_str: Option<&str>, cli: &Cli) -> anyhow::Re
         format,
         level: cli.level(),
         overwrite: cli.force,
-        cancel: Default::default(),
+        cancel,
     };
 
     let mut prog = ui::build(cli.quiet);
-    let report =
-        compress(input, output, &opts, |p| (prog.callback)(p))
-            .map_err(|e| map_core_error(e, "compress"))?;
+    let result = compress(input, output, &opts, |p| (prog.callback)(p));
+
+    // On cancellation: abandon the bar so the terminal is not left corrupted,
+    // then print a dedicated "cancelled" line to stderr and exit 1.
+    if let Err(CoreError::Cancelled) = result {
+        prog.guard.0.abandon();
+        eprintln!("cancelled");
+        std::process::exit(1);
+    }
+
+    let report = result.map_err(|e| map_core_error(e, "compress"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
 
     if !cli.quiet {
@@ -182,7 +200,12 @@ fn confirm_silent_tar(output: &str, yes: bool) -> anyhow::Result<()> {
 // Extract
 // ---------------------------------------------------------------------------
 
-fn cmd_extract(input: &Path, dest: &Path, cli: &Cli) -> anyhow::Result<()> {
+fn cmd_extract(
+    input: &Path,
+    dest: &Path,
+    cli: &Cli,
+    cancel: CancelToken,
+) -> anyhow::Result<()> {
     // Wrap decision: call list() to inspect the archive's top-level entries.
     //
     // - Ok(entries): count distinct first-path-components.
@@ -225,13 +248,21 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli) -> anyhow::Result<()> {
     let opts = ExtractOptions {
         format: cli.algo,
         overwrite: cli.force,
-        cancel: Default::default(),
+        cancel,
     };
 
     let mut prog = ui::build(cli.quiet);
-    let report =
-        extract(input, &effective_dest, &opts, |p| (prog.callback)(p))
-            .map_err(|e| map_core_error(e, "extract"))?;
+    let result = extract(input, &effective_dest, &opts, |p| (prog.callback)(p));
+
+    // On cancellation: abandon the bar so the terminal is not left corrupted,
+    // then print a dedicated "cancelled" line to stderr and exit 1.
+    if let Err(CoreError::Cancelled) = result {
+        prog.guard.0.abandon();
+        eprintln!("cancelled");
+        std::process::exit(1);
+    }
+
+    let report = result.map_err(|e| map_core_error(e, "extract"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
 
     if !cli.quiet {

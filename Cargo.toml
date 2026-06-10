@@ -7,8 +7,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Unified compression/archive library and CLI"
+readme = "README.md"
+keywords = ["compression", "archive", "zip", "tar", "zstd"]
+categories = ["compression", "command-line-utilities"]
 
 [workspace.dependencies]
+ctrlc = "3"
 thiserror = "2"
 tempfile = "3"
 flate2 = "1.1.9"
