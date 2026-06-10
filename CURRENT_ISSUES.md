@@ -44,6 +44,19 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `Error::AlreadyExists` regardless of the `overwrite` flag, and update the
   pinning test.
 
+- **Where:** `crates/rcomp/src/run.rs` (`cmd_extract`, sidecar verification order)
+  **What:** For a corrupted codec-only archive (`.gz`, `.zst`, …) with a
+  sidecar present, the CLI calls core `list()` (for the wrap decision) before
+  `extract()`, and `list()` fails decoding the corrupt stream with a raw
+  `Error::Io` — so the user sees a decode error instead of the more useful
+  `ChecksumMismatch` the sidecar could have produced. Container formats whose
+  `list()` doesn't decode payload data (zip) report the mismatch correctly.
+  **Fix:** In `cmd_extract`, when a sidecar was parsed, hash the input and
+  check the artifact digest *before* the `list()` wrap-decision call (the CLI
+  already has the expected digest; a small streaming hash helper or a core
+  `verify_file_sha256` export would do it). Cosmetic-priority: the operation
+  still fails safely today, just with a worse message.
+
 - **Where:** `crates/rcomp-core/tests/fixtures/` (lz4 interop gap)
   **What:** No lz4 interop fixture: `lz4` is not on PATH and no crate in the
   local cargo registry bundles a reference frame-format file (`lz4-sys` only

@@ -46,6 +46,14 @@ rcomp man                           # print a troff man page to stdout
   -x, --extract          Force extract mode
       --unwrap           Extract entries directly into the destination
                          (skip the auto-wrap folder)
+      --checksum         Write a sha256sum-format sidecar <OUTPUT>.sha256
+                         and show the digest in the summary (compress only;
+                         on extraction a sidecar is auto-verified when found)
+      --all              Ignore .gitignore rules: include every file in the
+                         input folder, .git included (compress only)
+      --exclude <GLOB>   Exclude paths matching a gitignore-style glob,
+                         relative to the input folder; repeatable; works
+                         with or without --all (compress only)
   -y, --yes              Auto-accept all confirmation prompts
   -f, --force            Overwrite existing output
   -q, --quiet            No progress output
@@ -77,6 +85,122 @@ a new folder named after the archive stem (`photos.tar.gz` extracts into
 `./photos/`). A single top-level folder, a single file, or a bare codec stream
 extracts directly without extra nesting. `--unwrap` forces direct extraction
 regardless.
+
+### Checksums
+
+Pass `--checksum` when compressing to compute a SHA-256 digest of the output
+and write a sidecar file next to it:
+
+```
+rcomp folder/ archive.tar.gz --checksum
+```
+
+The sidecar is named `<output>.sha256` (e.g. `archive.tar.gz.sha256`).  Its
+format is compatible with `sha256sum -c`:
+
+```
+# content-sha256: 3b4c2a1d...e8f9        ← only for codec/tar outputs
+a1b2c3d4...f0  archive.tar.gz
+```
+
+The `# content-sha256:` comment line is present for formats that have a single
+pre-compression byte stream (codec-only, tar, and tar+codec combinations).  It
+is absent for zip and 7z, which compress entries individually.
+
+**Artifact digest** — SHA-256 of the compressed file written to disk (transport
+integrity).
+
+**Content digest** — SHA-256 of the pre-compression stream:
+
+- codec-only, file input: digest of the raw input file bytes
+- tar + codec: digest of the uncompressed tar byte stream
+- plain tar: same bytes as the artifact digest (both are always equal)
+- zip / 7z: not produced (`None`)
+
+The content digest is brotli's only integrity check — see [Limitations](#limitations).
+
+The artifact digest is also printed to stdout after the summary line:
+
+```
+archive.tar.gz  1.2 MiB → 380 KiB (31.7%)  in 0.4s
+sha256: a1b2c3d4...f0
+```
+
+`-q` suppresses all stdout output but still writes the sidecar file.
+
+**Verifying manually:**
+
+```
+sha256sum -c archive.tar.gz.sha256
+```
+
+`sha256sum` verifies the artifact line and ignores the `#` comment.
+
+**Auto-verify on extraction:**
+
+When extracting an archive that has a sibling `<archive>.sha256` file, rcomp
+reads and verifies both digests automatically — no flag is needed:
+
+```
+rcomp archive.tar.gz                  # sidecar found → verifies before unpacking
+```
+
+The artifact digest is checked before any files are written to the destination.
+The content digest is checked during extraction as the stream is read.  A
+mismatch on either causes an error (exit 1) with a clear message; no output
+files are left behind when the artifact check fails.
+
+If the sidecar is present but cannot be parsed, extraction fails (exit 1) —
+a present sidecar is treated as a promise.  If no sidecar exists, extraction
+proceeds exactly as before with no verification.
+
+`--checksum` on an extract operation is a usage error (exit 2).
+
+### .gitignore awareness
+
+When compressing a folder, rcomp follows `.gitignore` rules by default.  Full
+git semantics are applied: the origin folder's own `.gitignore` and any nested
+`.gitignore` files in subdirectories are honoured.  The `.git` directory itself
+is always excluded.  Hidden dotfiles (e.g. `.editorconfig`, `.gitignore`) are
+included — only ignore rules and `.git` exclude things.
+
+A folder with no `.gitignore` anywhere is archived identically to before.
+
+**`--all`** disables all `.gitignore` filtering.  Every file is included,
+including the `.git` directory:
+
+```
+rcomp folder/ archive.tar.gz --all
+```
+
+**`--exclude <GLOB>`** excludes paths matching a gitignore-style glob, matched
+relative to the input folder.  The flag may be repeated and works with or
+without `--all`:
+
+```
+rcomp folder/ archive.tar.gz --exclude 'target/' --exclude '*.log'
+rcomp folder/ archive.tar.gz --all --exclude 'target/'
+```
+
+An invalid glob is a usage error (exit 2).
+
+When any paths are excluded, rcomp prints a note to stderr naming which sources
+were active:
+
+```
+excluded 47 paths via .gitignore (use --all to include)
+excluded 12 paths via --exclude
+excluded 59 paths via .gitignore and --exclude
+```
+
+This note goes to stderr and is suppressed by `-q`, like other non-error output.
+
+**Reproducibility:** rcomp deliberately does not consult parent-directory
+`.gitignore` files, the global gitignore (`~/.config/git/ignore`), or
+`.git/info/exclude`.  Archives are reproducible from the folder alone,
+independent of machine-local git configuration.
+
+`--all` and `--exclude` on an extract operation are usage errors (exit 2).
 
 ### Exit codes
 
@@ -138,11 +262,12 @@ level because it does not change the compressed result.
   `0644`, and symlinks are stored as regular files (dereferenced). This is an
   upstream crate limitation.
 
-- **Brotli: no magic bytes, no content checksum.** Brotli-compressed files
+- **Brotli: no magic bytes, no internal checksum.** Brotli-compressed files
   cannot be detected by content alone — an extensionless `.br` file requires
-  `--algo brotli`. Additionally, brotli has no framing checksum, so a
-  corrupted stream can decode "successfully" into wrong bytes rather than
-  returning an error.
+  `--algo brotli`.  Brotli has no framing checksum, so a corrupted stream can
+  decode "successfully" into wrong bytes rather than returning an error.  Use
+  `--checksum` when compressing brotli outputs; the content digest in the
+  resulting sidecar is the only integrity protection available for `.br` files.
 
 - **Zip extraction progress has no percentage.** The zip format is
   random-access, so rcomp reports entry count and bytes written rather than
