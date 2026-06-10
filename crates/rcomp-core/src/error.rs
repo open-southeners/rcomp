@@ -7,12 +7,20 @@ use std::path::PathBuf;
 pub enum Error {
     /// The file extension and magic bytes did not match any known format.
     #[error("unrecognized or unsupported format: {path}")]
-    UnknownFormat { path: PathBuf },
+    UnknownFormat {
+        /// The path or name that could not be identified.
+        path: PathBuf,
+    },
 
     /// The requested operation is not available for the given format (e.g. rar
     /// compression).
     #[error("{operation} is not supported for {format}")]
-    UnsupportedOperation { format: String, operation: String },
+    UnsupportedOperation {
+        /// The format name (e.g. `"rar"`).
+        format: String,
+        /// The operation that was attempted (e.g. `"compress"`).
+        operation: String,
+    },
 
     /// The operation was cancelled via a [`crate::progress::CancelToken`].
     #[error("operation cancelled")]
@@ -20,12 +28,18 @@ pub enum Error {
 
     /// The output path already exists and the caller did not enable overwrite.
     #[error("output already exists: {path}")]
-    AlreadyExists { path: PathBuf },
+    AlreadyExists {
+        /// The path that already exists.
+        path: PathBuf,
+    },
 
     /// An archive entry's path resolves outside the destination directory
     /// (zip-slip / path-traversal attack).
     #[error("archive entry escapes destination: {entry}")]
-    PathTraversal { entry: PathBuf },
+    PathTraversal {
+        /// The offending entry path as stored in the archive.
+        entry: PathBuf,
+    },
 
     /// An underlying I/O error.
     #[error(transparent)]

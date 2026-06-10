@@ -31,7 +31,13 @@ pub enum Codec {
     Lz4,
     /// Brotli (`.br`).
     ///
-    /// Note: Brotli has no magic bytes signature; detection is extension-only.
+    /// **No magic bytes:** brotli-compressed files cannot be detected by
+    /// content alone.  An extensionless file requires passing `--algo brotli`
+    /// (CLI) or `opts.format` (library) explicitly.
+    ///
+    /// **No content checksum:** brotli has no framing checksum.  A corrupted
+    /// stream may decode "successfully" into wrong bytes rather than returning
+    /// an error.
     Brotli,
 }
 
@@ -166,7 +172,7 @@ impl fmt::Display for Format {
 /// # Errors
 ///
 /// Returns [`crate::Error::UnknownFormat`] when the string does not map to
-/// any known format, with `path` set to the input string as a [`PathBuf`].
+/// any known format, with `path` set to the input string as a `PathBuf`.
 impl FromStr for Format {
     type Err = crate::Error;
 
