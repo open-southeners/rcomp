@@ -42,7 +42,7 @@ mod archive;
 mod ops;
 
 pub use codec::{Encoder, new_decoder, new_encoder};
-pub use detect::{detect, detect_from_bytes, detect_from_extension};
+pub use detect::{detect, detect_from_bytes, detect_from_extension, split_format_suffix};
 pub use error::{Error, Result};
 pub use format::{Codec, Container, Format};
 pub use level::Level;

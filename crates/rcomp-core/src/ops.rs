@@ -499,24 +499,11 @@ fn do_extract(
             let mut decoder = new_decoder(codec, Box::new(counting))?;
 
             // Sniff the first 512 decompressed bytes for a tar ustar magic.
-            let mut sniff = [0u8; 512];
-            let mut sniff_read = 0usize;
-            while sniff_read < 512 {
-                match decoder.read(&mut sniff[sniff_read..]) {
-                    Ok(0) => break,
-                    Ok(n) => sniff_read += n,
-                    Err(e) => return Err(Error::Io(e)),
-                }
-            }
-            let sniff_buf = &sniff[..sniff_read];
-
-            // Check for ustar magic at offset 257 (POSIX tar header).
-            let is_tar = sniff_buf.len() >= 262
-                && &sniff_buf[257..262] == b"ustar";
+            let (is_tar, sniff_bytes) = sniff_tar_prefix(&mut *decoder)?;
 
             if is_tar {
                 // Re-chain the sniffed prefix with the remaining decoder stream.
-                let prefix = Cursor::new(sniff_buf.to_vec());
+                let prefix = Cursor::new(sniff_bytes);
                 let chained: Box<dyn Read + '_> = Box::new(prefix.chain(decoder));
                 let entries = tar::extract(
                     chained,
@@ -546,7 +533,7 @@ fn do_extract(
                 // Write the already-sniffed bytes first, then copy the rest,
                 // syncing bytes_done from the compressed-bytes counter per
                 // chunk so bytes_done never exceeds bytes_total.
-                out_file.write_all(sniff_buf)?;
+                out_file.write_all(&sniff_bytes)?;
                 copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
 
                 let compressed = counter.load(Ordering::Relaxed);
@@ -608,8 +595,27 @@ pub fn list(archive: &Path) -> Result<Vec<Entry>> {
             tar::list(reader)
         }
 
-        // Codec-only and unsupported container formats.
-        // RAR without the rar feature falls through here.
+        // Codec-only stream: decode and sniff for tar ustar magic.
+        // If tar is found, list through the decoder; otherwise UnsupportedOperation.
+        (None, Some(codec)) => {
+            let file = fs::File::open(archive)?;
+            let mut decoder = new_decoder(codec, Box::new(file))?;
+
+            let (is_tar, sniff_bytes) = sniff_tar_prefix(&mut *decoder)?;
+
+            if is_tar {
+                let prefix = Cursor::new(sniff_bytes);
+                let chained: Box<dyn Read> = Box::new(prefix.chain(decoder));
+                tar::list(chained)
+            } else {
+                Err(Error::UnsupportedOperation {
+                    format: format.to_string(),
+                    operation: "list".into(),
+                })
+            }
+        }
+
+        // Unsupported container formats (RAR without the rar feature falls through here).
         _ => {
             if let Some(Container::Rar) = format.container {
                 Err(Error::UnsupportedOperation {
@@ -629,6 +635,31 @@ pub fn list(archive: &Path) -> Result<Vec<Entry>> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Read up to 512 decompressed bytes from `reader` and check for a POSIX
+/// `ustar` tar magic at byte offset 257.
+///
+/// Returns `(is_tar, sniffed_bytes)`.  The returned `Vec` contains the bytes
+/// that were already consumed from the reader so the caller can re-chain them
+/// with the remaining stream using [`std::io::Cursor::chain`].
+///
+/// This is the single canonical implementation of the tar-inside-codec sniff
+/// used by both [`do_extract`] (extract path) and [`list`].
+fn sniff_tar_prefix(reader: &mut dyn Read) -> Result<(bool, Vec<u8>)> {
+    let mut sniff = [0u8; 512];
+    let mut sniff_read = 0usize;
+    while sniff_read < 512 {
+        match reader.read(&mut sniff[sniff_read..]) {
+            Ok(0) => break,
+            Ok(n) => sniff_read += n,
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+    let sniff_buf = &sniff[..sniff_read];
+    // Check for ustar magic at offset 257 (POSIX tar header).
+    let is_tar = sniff_buf.len() >= 262 && &sniff_buf[257..262] == b"ustar";
+    Ok((is_tar, sniff_buf.to_vec()))
+}
 
 /// Recursively sum the size of all regular files under `path`.
 ///

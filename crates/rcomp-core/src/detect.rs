@@ -15,6 +15,72 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// Split-suffix helper
+// ---------------------------------------------------------------------------
+
+/// Split a file name into its stem and detected [`Format`] by the longest
+/// recognised suffix.
+///
+/// Matching is case-insensitive.  Returns `(stem, format)` on success, or
+/// `None` when the name carries no recognised extension.
+///
+/// # Examples
+///
+/// ```
+/// use rcomp_core::detect::split_format_suffix;
+/// use rcomp_core::format::{Container, Codec, Format};
+///
+/// let (stem, fmt) = split_format_suffix("photos.TAR.GZ").unwrap();
+/// assert_eq!(stem, "photos");
+/// assert_eq!(fmt, Format::layered(Container::Tar, Codec::Gzip));
+///
+/// let (stem, fmt) = split_format_suffix("a.b.tar.gz").unwrap();
+/// assert_eq!(stem, "a.b");
+///
+/// assert!(split_format_suffix("Makefile").is_none());
+/// ```
+pub fn split_format_suffix(file_name: &str) -> Option<(&str, Format)> {
+    let lower = file_name.to_ascii_lowercase();
+
+    type ExtensionRule = (&'static str, fn() -> Format);
+    const TABLE: &[ExtensionRule] = &[
+        // Two-part (layered) extensions — must come before their single-part counterparts.
+        (".tar.gz", || Format::layered(Container::Tar, Codec::Gzip)),
+        (".tar.bz2", || Format::layered(Container::Tar, Codec::Bzip2)),
+        (".tar.xz", || Format::layered(Container::Tar, Codec::Xz)),
+        (".tar.zst", || Format::layered(Container::Tar, Codec::Zstd)),
+        (".tar.lz4", || Format::layered(Container::Tar, Codec::Lz4)),
+        (".tar.br", || Format::layered(Container::Tar, Codec::Brotli)),
+        // Abbreviated equivalents for layered tar archives.
+        (".tgz", || Format::layered(Container::Tar, Codec::Gzip)),
+        (".tbz2", || Format::layered(Container::Tar, Codec::Bzip2)),
+        (".txz", || Format::layered(Container::Tar, Codec::Xz)),
+        (".tzst", || Format::layered(Container::Tar, Codec::Zstd)),
+        // Plain container/codec single-part extensions.
+        (".tar", || Format::container(Container::Tar)),
+        (".gz", || Format::codec(Codec::Gzip)),
+        (".bz2", || Format::codec(Codec::Bzip2)),
+        (".xz", || Format::codec(Codec::Xz)),
+        (".zst", || Format::codec(Codec::Zstd)),
+        (".lz4", || Format::codec(Codec::Lz4)),
+        (".br", || Format::codec(Codec::Brotli)),
+        (".zip", || Format::container(Container::Zip)),
+        (".7z", || Format::container(Container::SevenZ)),
+        (".rar", || Format::container(Container::Rar)),
+    ];
+
+    for (suffix, make_format) in TABLE {
+        if lower.ends_with(suffix) {
+            // The stem is the original (non-lowercased) name without the suffix.
+            let stem = &file_name[..file_name.len() - suffix.len()];
+            return Some((stem, make_format()));
+        }
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Extension table
 // ---------------------------------------------------------------------------
 
@@ -603,6 +669,193 @@ mod tests {
     fn magic_short_buffer_under_four_bytes_returns_none_for_four_byte_sigs() {
         // zstd needs 4 bytes; 3 bytes → None.
         assert_eq!(detect_from_bytes(&[0x28, 0xB5, 0x2F]), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // split_format_suffix — every table row, multi-dot stems, no match
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_tar_gz() {
+        let (stem, fmt) = split_format_suffix("archive.tar.gz").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Gzip));
+    }
+
+    #[test]
+    fn split_tar_bz2() {
+        let (stem, fmt) = split_format_suffix("archive.tar.bz2").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Bzip2));
+    }
+
+    #[test]
+    fn split_tar_xz() {
+        let (stem, fmt) = split_format_suffix("archive.tar.xz").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Xz));
+    }
+
+    #[test]
+    fn split_tar_zst() {
+        let (stem, fmt) = split_format_suffix("archive.tar.zst").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Zstd));
+    }
+
+    #[test]
+    fn split_tar_lz4() {
+        let (stem, fmt) = split_format_suffix("archive.tar.lz4").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Lz4));
+    }
+
+    #[test]
+    fn split_tar_br() {
+        let (stem, fmt) = split_format_suffix("archive.tar.br").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Brotli));
+    }
+
+    #[test]
+    fn split_tgz() {
+        let (stem, fmt) = split_format_suffix("archive.tgz").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Gzip));
+    }
+
+    #[test]
+    fn split_tbz2() {
+        let (stem, fmt) = split_format_suffix("archive.tbz2").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Bzip2));
+    }
+
+    #[test]
+    fn split_txz() {
+        let (stem, fmt) = split_format_suffix("archive.txz").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Xz));
+    }
+
+    #[test]
+    fn split_tzst() {
+        let (stem, fmt) = split_format_suffix("archive.tzst").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Zstd));
+    }
+
+    #[test]
+    fn split_tar() {
+        let (stem, fmt) = split_format_suffix("archive.tar").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::container(Container::Tar));
+    }
+
+    #[test]
+    fn split_gz() {
+        let (stem, fmt) = split_format_suffix("file.gz").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Gzip));
+    }
+
+    #[test]
+    fn split_bz2() {
+        let (stem, fmt) = split_format_suffix("file.bz2").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Bzip2));
+    }
+
+    #[test]
+    fn split_xz() {
+        let (stem, fmt) = split_format_suffix("file.xz").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Xz));
+    }
+
+    #[test]
+    fn split_zst() {
+        let (stem, fmt) = split_format_suffix("file.zst").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Zstd));
+    }
+
+    #[test]
+    fn split_lz4() {
+        let (stem, fmt) = split_format_suffix("file.lz4").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Lz4));
+    }
+
+    #[test]
+    fn split_br() {
+        let (stem, fmt) = split_format_suffix("file.br").unwrap();
+        assert_eq!(stem, "file");
+        assert_eq!(fmt, Format::codec(Codec::Brotli));
+    }
+
+    #[test]
+    fn split_zip() {
+        let (stem, fmt) = split_format_suffix("archive.zip").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::container(Container::Zip));
+    }
+
+    #[test]
+    fn split_7z() {
+        let (stem, fmt) = split_format_suffix("archive.7z").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::container(Container::SevenZ));
+    }
+
+    #[test]
+    fn split_rar() {
+        let (stem, fmt) = split_format_suffix("archive.rar").unwrap();
+        assert_eq!(stem, "archive");
+        assert_eq!(fmt, Format::container(Container::Rar));
+    }
+
+    #[test]
+    fn split_multi_dot_stem_tar_gz() {
+        let (stem, fmt) = split_format_suffix("a.b.tar.gz").unwrap();
+        assert_eq!(stem, "a.b");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Gzip));
+    }
+
+    #[test]
+    fn split_multi_dot_stem_gz() {
+        let (stem, fmt) = split_format_suffix("my.data.txt.gz").unwrap();
+        assert_eq!(stem, "my.data.txt");
+        assert_eq!(fmt, Format::codec(Codec::Gzip));
+    }
+
+    #[test]
+    fn split_case_insensitive_tar_gz_uppercase() {
+        let (stem, fmt) = split_format_suffix("photos.TAR.GZ").unwrap();
+        assert_eq!(stem, "photos");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Gzip));
+    }
+
+    #[test]
+    fn split_case_insensitive_mixed() {
+        let (stem, fmt) = split_format_suffix("Archive.Tar.Bz2").unwrap();
+        assert_eq!(stem, "Archive");
+        assert_eq!(fmt, Format::layered(Container::Tar, Codec::Bzip2));
+    }
+
+    #[test]
+    fn split_no_match_returns_none() {
+        assert!(split_format_suffix("document.pdf").is_none());
+    }
+
+    #[test]
+    fn split_no_extension_returns_none() {
+        assert!(split_format_suffix("Makefile").is_none());
+    }
+
+    #[test]
+    fn split_empty_string_returns_none() {
+        assert!(split_format_suffix("").is_none());
     }
 
     // -----------------------------------------------------------------------

@@ -525,6 +525,62 @@ fn list_zst_codec_only_returns_unsupported() {
     );
 }
 
+/// list() on a codec-only file that wraps a silent-tar (dir → .bz2) should
+/// return the archive entries by sniffing the decompressed stream.
+#[test]
+fn list_bz2_silent_tar_returns_tree_entries() {
+    let src = TempDir::new().unwrap();
+    build_test_tree(src.path());
+
+    let work = TempDir::new().unwrap();
+    // Codec-only extension: compress applies the silent-tar rule.
+    let archive = work.path().join("out.bz2");
+
+    compress(src.path(), &archive, &Default::default(), nop_progress)
+        .expect("silent-tar compress should succeed");
+
+    let entries = list(&archive).expect("list on silent-tar bz2 should succeed");
+    let paths: HashSet<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
+
+    assert!(paths.contains(Path::new("a.txt")), "expected a.txt in list; got {:?}", paths);
+    assert!(
+        paths.contains(Path::new("sub/b.txt")) || paths.contains(Path::new("sub\\b.txt")),
+        "expected sub/b.txt in list; got {:?}",
+        paths
+    );
+    assert!(
+        paths.iter().any(|p| p.ends_with("empty_dir")),
+        "expected empty_dir in list; got {:?}",
+        paths
+    );
+}
+
+/// list() on a codec-only file containing a plain single file (not tar-wrapped)
+/// must still return UnsupportedOperation.
+#[test]
+fn list_zst_bare_single_file_returns_unsupported() {
+    let src_dir = TempDir::new().unwrap();
+    std::fs::write(src_dir.path().join("note.txt"), b"plain text, not tar").unwrap();
+
+    let work = TempDir::new().unwrap();
+    // Compress a single file → codec-only, no silent-tar wrap.
+    let archive = work.path().join("note.txt.zst");
+
+    compress(
+        &src_dir.path().join("note.txt"),
+        &archive,
+        &Default::default(),
+        nop_progress,
+    )
+    .unwrap();
+
+    let err = list(&archive).expect_err("list on bare zst single-file should return UnsupportedOperation");
+    assert!(
+        matches!(err, rcomp_core::Error::UnsupportedOperation { .. }),
+        "expected UnsupportedOperation, got {err:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 7. Overwrite refusals
 // ---------------------------------------------------------------------------
