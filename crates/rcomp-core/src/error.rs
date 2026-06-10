@@ -52,6 +52,26 @@ pub enum Error {
         message: String,
     },
 
+    /// A SHA-256 digest mismatch detected during extraction.
+    ///
+    /// The `kind` field distinguishes which digest failed:
+    ///
+    /// - `"artifact"` — the compressed file's SHA-256 did not match the
+    ///   expected value supplied via [`crate::ExtractOptions::verify_sha256`].
+    ///   Nothing is written to the destination directory when this fires.
+    /// - `"content"` — the decompressed stream's SHA-256 did not match the
+    ///   expected value supplied via
+    ///   [`crate::ExtractOptions::verify_content_sha256`].
+    #[error("checksum mismatch ({kind}): expected {expected}, got {actual}")]
+    ChecksumMismatch {
+        /// Which digest failed: `"artifact"` or `"content"`.
+        kind: &'static str,
+        /// The expected digest (lowercase hex).
+        expected: String,
+        /// The actual digest computed during the operation (lowercase hex).
+        actual: String,
+    },
+
     /// An underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -112,5 +132,26 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("[bad"), "should contain the pattern");
         assert!(msg.contains("unclosed character class"), "should contain the message");
+    }
+
+    #[test]
+    fn checksum_mismatch_displays_kind_expected_actual() {
+        let err = Error::ChecksumMismatch {
+            kind: "artifact",
+            expected: "aabbcc".into(),
+            actual: "112233".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("artifact"), "should contain kind");
+        assert!(msg.contains("aabbcc"), "should contain expected digest");
+        assert!(msg.contains("112233"), "should contain actual digest");
+
+        let err2 = Error::ChecksumMismatch {
+            kind: "content",
+            expected: "deadbeef".into(),
+            actual: "cafebabe".into(),
+        };
+        let msg2 = err2.to_string();
+        assert!(msg2.contains("content"), "should contain kind 'content'");
     }
 }
