@@ -36,6 +36,10 @@ release distribution (prebuilt binaries, Homebrew). All tracked in
 | Silent-tar naming | Keep the user's name verbatim, but warn + ask confirmation before compressing; `-y` auto-accepts |
 | `--edge` meaning | Highest output *ratio* the codec can produce — hardware cost is explicitly not part of the level contract |
 | Extraction wrap | Auto-wrap loose multi-entry archives into `./<archive-stem>/`; `--unwrap` disables |
+| Checksum | Opt-in `--checksum`: SHA-256 of the **compressed output** plus, where a single pre-compression stream exists, a **content digest** — both computed streaming, carried in `Report`; CLI writes a `sha256sum`-compatible sidecar `<output>.sha256` (content digest as a `#` comment line) — decided 2026-06-10 |
+| Sidecar auto-verify | Extraction auto-verifies when `<input>.sha256` exists next to the archive: compressed digest checked **before** unpacking, content digest checked during; mismatch → error, exit 1. No flag — present sidecar means verify — decided 2026-06-10 |
+| .gitignore follower | On by default for **folder** inputs: full git semantics (origin + nested `.gitignore` files, via the `ignore` crate) and the `.git` directory itself is excluded; `--all` disables all of it; CLI prints an excluded-count note (never silent omission) — decided 2026-06-10 |
+| `--exclude` | Repeatable gitignore-style globs matched relative to the origin folder, applied independently of `--all` (so `--all --exclude target` works); counts into the same excluded-count note — decided 2026-06-10 |
 
 ## Workspace layout
 
@@ -107,6 +111,78 @@ Errors: one `thiserror` enum (`UnknownFormat`, `UnsupportedOperation` — e.g.
 rar compression, `Io`, `Cancelled`, `PathTraversal`, …). `Report` carries input
 size, output size, ratio, duration, entry count.
 
+### Output checksum (opt-in) + sidecar auto-verify
+
+- `CompressOptions` gains `checksum: bool` (default `false`). When set, the
+  output stream is teed through a SHA-256 hasher **while being written** — no
+  second read pass — and `Report` gains `sha256: Option<String>` (lowercase
+  hex digest of the compressed artifact).
+- **Content digest:** where the operation has a single pre-compression byte
+  stream — file → codec, folder → silent-tar → codec, and `tar.*` targets
+  (the tar stream) — that stream is teed through a second hasher;
+  `Report.content_sha256: Option<String>`. zip/7z compress entries
+  individually, so they have no canonical content stream and emit no content
+  digest (`None`).
+- The core only computes and returns digests. The sidecar is the consumer's
+  job: the CLI writes `<output>.sha256` next to the output —
+
+  ```
+  # content-sha256: <hex>          ← only when a content digest exists
+  <hex>  <output-file-name>
+  ```
+
+  `sha256sum -c` verifies the artifact line and ignores the `#` comment;
+  rcomp parses both. The summary line shows the artifact digest.
+- The artifact digest covers the compressed bytes (transport verification);
+  the content digest proves a later extraction reproduces the original
+  stream — and is the only integrity check brotli can ever have (no internal
+  checksum).
+- **Auto-verify on extraction:** when extracting `<input>` and a sibling
+  `<input>.sha256` exists, the CLI parses it and passes the expected digests
+  via `ExtractOptions` (`verify_sha256` / `verify_content_sha256`,
+  `Option<String>`). Core checks the artifact digest **before** unpacking
+  (streaming pre-pass over the input) and the content digest **during**
+  extraction (tee on the decompressed stream, compared at the end). Mismatch
+  → `Error::ChecksumMismatch` (new variant: which digest, expected, actual),
+  CLI exit 1. An existing but unparseable sidecar is an error, not a skip.
+  No sidecar → no verification, exactly as before.
+- Sidecar collisions on compress follow the existing overwrite policy:
+  refuse without `--force`.
+- Crate: `sha2` (pure Rust, RustCrypto).
+
+### .gitignore-aware folder compression
+
+- Applies only when the **input is a directory** (any target: archive build
+  or the silent-tar path — both walk the tree through one shared walker).
+- `CompressOptions` gains `follow_gitignore: bool` (default **true**). When
+  true, the walk uses the `ignore` crate (ripgrep's) configured for:
+  - the origin folder's `.gitignore` plus **nested** `.gitignore` files in
+    subdirectories (full git semantics);
+  - the `.git` directory itself excluded — the archive contains what a fresh
+    checkout's working tree would;
+  - hidden files **included** (dotfiles like `.editorconfig` belong in an
+    archive; only ignore rules and `.git` exclude things);
+  - **no** parent-directory `.gitignore` traversal, no global gitignore, no
+    `.git/info/exclude` — archives must be reproducible from the folder
+    alone, not depend on machine-local git config.
+- A folder with no `.gitignore` anywhere behaves exactly as before.
+- **`--exclude <GLOB>`** (repeatable): gitignore-style globs matched relative
+  to the origin folder, fed to the same walker via the `ignore` crate's
+  override builder. `CompressOptions.exclude: Vec<String>`. Applied
+  **independently** of `follow_gitignore`, so `--all --exclude target/`
+  means "everything except target/". An invalid glob is a usage error
+  (exit 2).
+- `Report` gains `entries_excluded: u64` — one combined count across both
+  exclusion sources.
+- CLI: `--all` sets `follow_gitignore = false`. When anything was excluded,
+  the summary adds one note line naming whichever sources applied, e.g.
+  `excluded N paths via .gitignore (use --all to include)` /
+  `excluded N paths via .gitignore and --exclude` — exclusion is never
+  silent (except under `-q`, which the user explicitly asked for; the note
+  follows the same rule as all non-error output).
+- Crate: `ignore` (core dependency — the library is the product; the future
+  Tauri app gets the same behavior).
+
 ### Unified level mapping
 
 | Codec | `--fast` | `--best` (default) | `--edge` |
@@ -139,6 +215,8 @@ available at every level since it doesn't change the result.
 | zip | `zip` | |
 | 7z | `sevenz-rust2` | read + write, maintained fork |
 | rar | `unrar` | extract-only; **feature-gated** (`rar`, on by default in the CLI) because its license is freeware, not OSI |
+| sha256 | `sha2` | core only, for `--checksum` |
+| gitignore walk | `ignore` | core only, ripgrep's gitignore engine |
 | errors | `thiserror` | core only |
 | completions / man page | `clap_complete`, `clap_mangen` | CLI only, generated at build/release time |
 
@@ -159,6 +237,14 @@ OPTIONS:
   -x, --extract          Force extract mode
       --unwrap           Extract entries directly into the destination
                          (skip the auto-wrap folder)
+      --checksum         Write a sha256sum-format sidecar <OUTPUT>.sha256
+                         and show the digest in the summary (compress only;
+                         on extraction a sidecar is auto-verified when found)
+      --all              Ignore .gitignore rules: include every file in the
+                         input folder, .git included (compress only)
+      --exclude <GLOB>   Exclude paths matching a gitignore-style glob,
+                         relative to the input folder; repeatable; works
+                         with or without --all (compress only)
   -y, --yes              Auto-accept all confirmation prompts
   -f, --force            Overwrite existing output
   -q, --quiet            No progress output
@@ -224,6 +310,21 @@ The `ls` subcommand coexists with the flag-style default invocation via clap's
 - **Security tests**: crafted traversal/symlink archives must be rejected.
 - **CLI integration** via `assert_cmd`: inference rules, ambiguity errors,
   overwrite refusal, exit codes.
+- **Checksum tests**: sidecar verifies with `sha256sum -c` (comment line
+  ignored by coreutils); digests in `Report` match independently computed
+  hashes; content digest present for codec/tar paths and `None` for zip/7z;
+  sidecar respects the overwrite policy.
+- **Auto-verify tests**: extraction with a valid sidecar succeeds; corrupted
+  archive + sidecar → `ChecksumMismatch` before any file is written;
+  tampered content digest → mismatch error during extraction; unparseable
+  sidecar → error; absent sidecar → behavior unchanged; roundtrip
+  compress `--checksum` → extract verifies both digests end-to-end.
+- **Gitignore/exclude tests**: nested `.gitignore` honored; `.git` excluded;
+  hidden non-ignored dotfiles included; `--all` includes everything;
+  `--exclude` filters with and without `--all`; invalid glob → exit 2;
+  folder without `.gitignore` unchanged; excluded-count note appears with
+  the right source names (and never appears when nothing was excluded);
+  silent-tar path filters identically to archive paths.
 
 ## Build order
 
@@ -240,7 +341,14 @@ The `ls` subcommand coexists with the flag-style default invocation via clap's
 6. **Hardening & docs** — interop fixtures, overwrite policy edge cases,
    README with usage examples (incl. the unrar license note), rustdoc on the
    public API, `LICENSE-MIT` + `LICENSE-APACHE` files.
-7. **CI & release** — GitHub Actions: rustfmt + clippy + test matrix on
+7. **Checksum & gitignore** — `--checksum` SHA-256 sidecar with artifact +
+   content digests (core digests in `Report`, sidecar + summary in the CLI)
+   and sidecar auto-verify on extraction (`ChecksumMismatch` error path);
+   `.gitignore`-aware folder walks through one shared walker (`ignore`
+   crate, nested gitignores, `.git` excluded, hidden files kept) with
+   `--all` opt-out, repeatable `--exclude` globs, and the excluded-count
+   note; README + rustdoc updates for all of it.
+8. **CI & release** — GitHub Actions: rustfmt + clippy + test matrix on
    Linux/macOS/Windows (Windows coverage matters before the Tauri app, which
    is cross-desktop), plus a release workflow that publishes `rcomp-core` then
    `rcomp` to crates.io when a GitHub release is tagged (needs the
