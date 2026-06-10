@@ -5,6 +5,16 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `crates/rcomp/src/main.rs` (no Ctrl-C handler)
+  **What:** Interrupting the CLI mid-operation kills the process outright, so
+  core's incomplete-output cleanup (which runs on `Error::Cancelled`) never
+  fires — a partial output file can be left behind. The core cancellation
+  plumbing (`CancelToken`) exists and works; the CLI just never wires a
+  signal handler to it.
+  **Fix:** Milestone 6 hardening: add a `ctrlc` (or `signal-hook`) handler
+  that trips a shared `CancelToken`, letting the in-flight operation unwind
+  through the normal Cancelled path and clean up.
+
 - **Where:** `crates/rcomp-core/src/archive/sevenz.rs` (+ `rar.rs`)
   **What:** `sevenz-rust2` 0.21 exposes only `windows_attributes` — no unix
   mode bits, no symlink entries. So 7z archives don't preserve permissions
@@ -62,10 +72,10 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `finish(self: Box<Self>) -> Result<Box<dyn Write>>` in a minor refactor;
   don't pre-build it now.
 
+
+## Resolved
+
 - **Where:** `crates/rcomp-core/src/format.rs` (`Codec::short_ext`)
-  **What:** The codec→short-extension mapping (`gz`, `bz2`, …) is `pub(crate)`.
-  The CLI (milestone 5) will likely need it for output-name derivation when
-  stripping/choosing extensions (e.g. bare-codec extraction naming, `--algo`
-  handling), and the Tauri app may too.
-  **Fix:** When the first external consumer appears, promote it to `pub` (or
-  expose an equivalent method on `Format`) instead of duplicating the table.
+  **Outcome:** Resolved by `split_format_suffix` in milestone 5 — external
+  consumers use `split_format_suffix` to strip the recognised suffix and obtain
+  both the stem and the `Format`, so `Codec::short_ext` remains `pub(crate)`.
