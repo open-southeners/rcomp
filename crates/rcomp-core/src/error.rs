@@ -41,6 +41,17 @@ pub enum Error {
         entry: PathBuf,
     },
 
+    /// An exclude glob pattern passed to the walker was syntactically invalid.
+    ///
+    /// This is a usage error; the CLI maps it to exit 2.
+    #[error("invalid glob pattern `{pattern}`: {message}")]
+    InvalidGlob {
+        /// The pattern that could not be parsed.
+        pattern: String,
+        /// A human-readable description of the parse error.
+        message: String,
+    },
+
     /// An underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -90,5 +101,16 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
         let err: Error = io_err.into();
         assert!(err.to_string().contains("no such file"));
+    }
+
+    #[test]
+    fn invalid_glob_displays_pattern_and_message() {
+        let err = Error::InvalidGlob {
+            pattern: "[bad".into(),
+            message: "unclosed character class".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("[bad"), "should contain the pattern");
+        assert!(msg.contains("unclosed character class"), "should contain the message");
     }
 }
