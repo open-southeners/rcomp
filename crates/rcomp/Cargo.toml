@@ -9,5 +9,19 @@ description.workspace = true
 name = "rcomp"
 path = "src/main.rs"
 
+[features]
+default = ["rar"]
+rar = ["rcomp-core/rar"]
+
 [dependencies]
 rcomp-core = { path = "../rcomp-core" }
+clap.workspace = true
+anyhow.workspace = true
+indicatif.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
