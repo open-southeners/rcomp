@@ -34,6 +34,7 @@ use tar::{Archive, Builder, EntryType, Header};
 use crate::{
     Error, Result,
     progress::Entry,
+    walk::WalkEntry,
 };
 
 use super::{
@@ -51,7 +52,11 @@ use super::{
 ///   directory itself is *not* included as an entry; its children are stored
 ///   relative to `src`.  For example, archiving `photos/` yields entries
 ///   `a.jpg` and `sub/b.jpg`, not `photos/a.jpg`.
-/// - If `src` is a **file**, a single entry is written using the file's name.
+///   When `walk_entries` is `Some`, those pre-computed entries are used
+///   directly (filtering already applied) instead of doing a fresh recursive
+///   `read_dir` walk.
+/// - If `src` is a **file**, `walk_entries` is ignored and a single entry is
+///   written using the file's name.
 /// - **Symlinks** are preserved as symlink entries (not dereferenced).
 /// - Entries within each directory are processed in sorted order for
 ///   deterministic archives across runs.
@@ -75,6 +80,7 @@ pub(crate) fn create<'w>(
     src: &Path,
     w: Box<dyn Write + 'w>,
     ctx: &mut OpCtx<'_>,
+    walk_entries: Option<&[WalkEntry]>,
 ) -> Result<(u64, Box<dyn Write + 'w>)> {
     let mut builder = Builder::new(w);
     // Preserve symlinks as symlink entries rather than dereferencing them.
@@ -84,14 +90,25 @@ pub(crate) fn create<'w>(
     let mut count: u64 = 0;
 
     if meta.is_dir() {
-        // Collect and sort all entries under src for determinism.
-        let entries = collect_dir_entries(src)?;
-        for (rel_path, abs_path) in entries {
-            let entry_name = rel_path.to_string_lossy().into_owned();
-            ctx.set_entry(&entry_name);
-            ctx.check_cancel()?;
-            append_entry(&mut builder, &abs_path, &rel_path, ctx)?;
-            count += 1;
+        if let Some(entries) = walk_entries {
+            // Use the pre-computed filtered entries (from the shared walker).
+            for we in entries {
+                let entry_name = we.rel.to_string_lossy().into_owned();
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                append_entry(&mut builder, &we.abs, &we.rel, ctx)?;
+                count += 1;
+            }
+        } else {
+            // Fallback: collect and sort all entries under src for determinism.
+            let entries = collect_dir_entries(src)?;
+            for (rel_path, abs_path) in entries {
+                let entry_name = rel_path.to_string_lossy().into_owned();
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                append_entry(&mut builder, &abs_path, &rel_path, ctx)?;
+                count += 1;
+            }
         }
     } else {
         // Single file: use just the file name as the archive entry name.
@@ -244,7 +261,11 @@ impl<R: Read> Read for CountingReader<'_, '_, R> {
 /// After writing a regular file the mtime stored in its tar header is restored
 /// via [`filetime::set_file_mtime`].  Only nonzero header mtimes are applied.
 ///
-/// Returns the number of entries extracted.
+/// Returns `(entry_count, reader)` where `reader` is the underlying byte
+/// stream that was passed in, returned after all entries are consumed.  The
+/// caller may drain any remaining bytes from it (e.g. to ensure a wrapping
+/// SHA-256 hasher sees the complete decompressed stream, including trailing
+/// end-of-archive blocks that the tar crate leaves unread).
 ///
 /// # Errors
 ///
@@ -252,13 +273,13 @@ impl<R: Read> Read for CountingReader<'_, '_, R> {
 /// [`Error::AlreadyExists`] if overwrite is disabled and a file exists,
 /// [`Error::Cancelled`] if the cancel token fires, or [`Error::Io`] for
 /// I/O failures.
-pub(crate) fn extract(
-    r: Box<dyn Read + '_>,
+pub(crate) fn extract<'r>(
+    r: Box<dyn Read + 'r>,
     dest: &Path,
     overwrite: bool,
     ctx: &mut OpCtx<'_>,
     counter: Option<Arc<AtomicU64>>,
-) -> Result<u64> {
+) -> Result<(u64, Box<dyn Read + 'r>)> {
     let mut archive = Archive::new(r);
     let mut count: u64 = 0;
 
@@ -393,7 +414,11 @@ pub(crate) fn extract(
         }
     }
 
-    Ok(count)
+    // Return the underlying reader so the caller can drain any remaining bytes
+    // (e.g. the trailing end-of-archive zero block that the tar crate stops
+    // reading before EOF) through any wrapping hasher.
+    let reader = archive.into_inner();
+    Ok((count, reader))
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +560,7 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
         let mut buf: Vec<u8> = Vec::new();
-        create(src, Box::new(&mut buf), &mut ctx).expect("create failed");
+        create(src, Box::new(&mut buf), &mut ctx, None).expect("create failed");
         // The inner writer (`&mut buf`) is returned but we don't need it here —
         // `buf` is already populated.
         buf
@@ -548,6 +573,7 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
         extract(Box::new(Cursor::new(buf)), dest.path(), false, &mut ctx, None)
+            .map(|(_, _)| ())
             .expect("extract failed");
         dest
     }
@@ -643,7 +669,7 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let mut buf: Vec<u8> = Vec::new();
-        let (n, _) = create(&src_file, Box::new(&mut buf), &mut ctx).expect("create failed");
+        let (n, _) = create(&src_file, Box::new(&mut buf), &mut ctx, None).expect("create failed");
         assert_eq!(n, 1);
 
         let dest = TempDir::new().unwrap();
@@ -651,7 +677,7 @@ mod tests {
         let mut cb2: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx2 = make_ctx!(token2, &mut *cb2);
 
-        let n2 = extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx2, None)
+        let (n2, _) = extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx2, None)
             .expect("extract failed");
         assert_eq!(n2, 1);
         assert_eq!(
@@ -729,7 +755,8 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let err = extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx, None)
-            .unwrap_err();
+            .err()
+            .expect("expected an error");
 
         assert!(
             matches!(err, Error::AlreadyExists { .. }),
@@ -782,7 +809,9 @@ mod tests {
 
         let dest = TempDir::new().unwrap();
         let err =
-            extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx, None).unwrap_err();
+            extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx, None)
+                .err()
+                .expect("expected an error");
 
         assert!(
             matches!(err, Error::Cancelled),
@@ -914,7 +943,8 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .unwrap_err();
+            .err()
+            .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -935,7 +965,8 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .unwrap_err();
+            .err()
+            .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -957,7 +988,8 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .unwrap_err();
+            .err()
+            .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -981,7 +1013,8 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .unwrap_err();
+            .err()
+            .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),

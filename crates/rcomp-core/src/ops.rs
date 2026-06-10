@@ -42,9 +42,11 @@ use std::{
     fs,
     io::{self, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
+    sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}},
     time::Instant,
 };
+
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     Codec, Container, Error, Format, Level, Result,
@@ -56,7 +58,9 @@ use crate::{
     },
     codec::{Encoder, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
+    hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
     progress::{CancelToken, Entry, Progress, Report, copy_with_progress},
+    walk::{WalkOptions, collect as walk_collect},
 };
 
 #[cfg(feature = "rar")]
@@ -68,14 +72,14 @@ use crate::archive::rar;
 
 /// Options for a [`compress`] operation.
 ///
-/// All fields implement `Default`; use struct-update syntax or set only the
-/// fields you need.
+/// `Default::default()` enables `.gitignore`-aware walking (`follow_gitignore:
+/// true`) and no extra exclude globs.
 ///
 /// ```no_run
 /// use rcomp_core::CompressOptions;
 /// let opts = CompressOptions { overwrite: true, ..Default::default() };
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CompressOptions {
     /// Override the output format.  When `None`, the format is inferred from
     /// the output file extension.
@@ -86,6 +90,50 @@ pub struct CompressOptions {
     pub overwrite: bool,
     /// Cancellation handle.  Cloning shares the same underlying flag.
     pub cancel: CancelToken,
+    /// When `true` (the default), directory inputs are walked with full git
+    /// semantics: the origin folder's `.gitignore` and nested `.gitignore`
+    /// files are honoured, and the `.git` directory itself is excluded from
+    /// the archive.  Set to `false` (equivalent to `--all`) to include every
+    /// file unconditionally.
+    ///
+    /// Note: parent-directory `.gitignore` files, the global gitignore, and
+    /// `.git/info/exclude` are deliberately **not** read — archives must be
+    /// reproducible from the folder alone.
+    pub follow_gitignore: bool,
+    /// Extra gitignore-style glob patterns to exclude, matched relative to the
+    /// input directory.  Applied independently of [`follow_gitignore`] — so
+    /// `follow_gitignore: false` with a non-empty `exclude` still filters the
+    /// listed globs.
+    ///
+    /// An invalid glob returns [`Error::InvalidGlob`].
+    ///
+    /// [`follow_gitignore`]: Self::follow_gitignore
+    pub exclude: Vec<String>,
+    /// When `true`, compute SHA-256 digests for the compressed output and,
+    /// where a single pre-compression stream exists, for the content stream.
+    ///
+    /// Results are returned in [`Report::sha256`] and
+    /// [`Report::content_sha256`].  When `false` (the default), both fields
+    /// are `None`.
+    ///
+    /// Digest computation is streaming — no extra read pass is performed.
+    pub checksum: bool,
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        Self {
+            format: None,
+            level: Level::default(),
+            overwrite: false,
+            cancel: CancelToken::default(),
+            // Default to true so that archives omit ignored build artefacts
+            // and the `.git` directory unless the caller explicitly opts out.
+            follow_gitignore: true,
+            exclude: Vec::new(),
+            checksum: false,
+        }
+    }
 }
 
 /// Options for an [`extract`] operation.
@@ -106,6 +154,25 @@ pub struct ExtractOptions {
     pub overwrite: bool,
     /// Cancellation handle.  Cloning shares the same underlying flag.
     pub cancel: CancelToken,
+    /// Expected SHA-256 digest of the compressed input artifact (lowercase hex).
+    ///
+    /// When `Some`, the input file is streamed through a SHA-256 hasher
+    /// **before** any data is written to `dest`.  If the computed digest does
+    /// not match, [`Error::ChecksumMismatch`] is returned with `kind =
+    /// "artifact"` and the destination directory is left empty of files.
+    pub verify_sha256: Option<String>,
+    /// Expected SHA-256 digest of the decompressed content stream (lowercase
+    /// hex).
+    ///
+    /// When `Some`, the decompressed stream is teed through a SHA-256 hasher
+    /// during extraction and compared at the end.  A mismatch returns
+    /// [`Error::ChecksumMismatch`] with `kind = "content"`.
+    ///
+    /// Supported paths: tar (with or without codec), tar-inside-codec (sniff
+    /// path), single-file codec.  For zip, 7z, and rar archives this option
+    /// is always [`Error::UnsupportedOperation`] — those formats compress
+    /// entries individually with no canonical content stream.
+    pub verify_content_sha256: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +253,37 @@ pub fn compress(
         });
     }
 
-    // --- Pre-scan input sizes for progress total ---
-    let bytes_total = scan_input_size(input)?;
+    // --- Pre-scan input sizes for progress total (file inputs only) ---
+    //
+    // For directory inputs the walker below produces an accurate bytes_total
+    // that accounts for filtering.  For file inputs we scan now.
+    let file_bytes_total = if !input_meta.is_dir() {
+        scan_input_size(input)?
+    } else {
+        0 // will be replaced by walk_result.bytes_total below
+    };
+
+    // --- Walk directory inputs for filtering and accurate bytes_total ---
+    //
+    // When the input is a directory, run the shared walker now so that:
+    // 1. `bytes_total` reflects only the *included* file sizes (a filtered
+    //    10 GiB `target/` must not inflate the denominator).
+    // 2. All three backends (tar, zip, 7z) receive the same pre-computed
+    //    entry list rather than each recursing independently.
+    //
+    // File inputs bypass the walker entirely (no filtering, excluded = 0).
+    let (walk_result, bytes_total, entries_excluded) = if input_meta.is_dir() {
+        let walk_opts = WalkOptions {
+            follow_gitignore: opts.follow_gitignore,
+            exclude: &opts.exclude,
+        };
+        let wr = walk_collect(input, &walk_opts)?;
+        let bt = wr.bytes_total;
+        let excl = wr.excluded;
+        (Some(wr), bt, excl)
+    } else {
+        (None, file_bytes_total, 0u64)
+    };
 
     let progress = Progress {
         bytes_done: 0,
@@ -202,14 +298,23 @@ pub fn compress(
     };
 
     // --- Dispatch ---
-    let result = do_compress(input, output, format, opts.level, &mut ctx, bytes_total);
+    let result = do_compress(
+        input,
+        output,
+        format,
+        opts.level,
+        &mut ctx,
+        bytes_total,
+        walk_result.as_ref().map(|wr| wr.entries.as_slice()),
+        opts.checksum,
+    );
 
     // --- Best-effort cleanup on failure ---
     if result.is_err() {
         let _ = fs::remove_file(output);
     }
 
-    let (entries, input_bytes) = result?;
+    let (entries, input_bytes, sha256, content_sha256) = result?;
 
     let output_bytes = fs::metadata(output).map(|m| m.len()).unwrap_or(0);
 
@@ -217,18 +322,30 @@ pub fn compress(
         input_bytes,
         output_bytes,
         entries,
+        entries_excluded,
         duration: start.elapsed(),
+        sha256,
+        content_sha256,
     })
 }
 
 /// Inner dispatch for compress (after guards/progress setup).
 ///
-/// `input_bytes_total` is the pre-scanned total input size (already computed
-/// by the caller to initialise `ctx.progress.bytes_total`).  It is reused
-/// here as the `input_bytes` field of the returned tuple, avoiding a second
-/// filesystem walk for all container formats.
+/// `input_bytes_total` is the pre-scanned (or walker-produced) total input
+/// size, already stored in `ctx.progress.bytes_total`.  It is returned as
+/// `input_bytes` in the tuple so that the caller avoids a second filesystem
+/// walk.
 ///
-/// Returns `(entry_count, input_bytes_read)`.
+/// `walk_entries` is `Some` when the caller pre-computed a walk for a directory
+/// input (see [`compress`]); `None` for file inputs.  The slice is forwarded
+/// to the archive backends so they do not need to recurse themselves.
+///
+/// `checksum` controls whether SHA-256 digests are computed.  When `true`,
+/// the artifact digest is always computed (all paths), and the content digest
+/// is computed where a single pre-compression stream exists.
+///
+/// Returns `(entry_count, input_bytes_read, artifact_sha256, content_sha256)`.
+#[allow(clippy::too_many_arguments)]
 fn do_compress(
     input: &Path,
     output: &Path,
@@ -236,61 +353,185 @@ fn do_compress(
     level: Level,
     ctx: &mut OpCtx<'_>,
     input_bytes_total: u64,
-) -> Result<(u64, u64)> {
+    walk_entries: Option<&[crate::walk::WalkEntry]>,
+    checksum: bool,
+) -> Result<(u64, u64, Option<String>, Option<String>)> {
     match (format.container, format.codec) {
         // 7z container (no codec layer — 7z carries its own LZMA2 codec).
+        //
+        // 7z handles its own I/O internally — no single output stream to tee.
+        // Artifact digest: hash the completed output file in a second pass.
+        // Content digest: None (entries are compressed individually).
         (Some(Container::SevenZ), None) => {
-            let entries = sevenz::create(input, output, level, ctx)?;
-            Ok((entries, input_bytes_total))
+            let entries = sevenz::create(input, output, level, ctx, walk_entries)?;
+            let artifact = if checksum {
+                Some(hash_file(output)?)
+            } else {
+                None
+            };
+            Ok((entries, input_bytes_total, artifact, None))
         }
 
         // Zip container (no codec layer).
+        //
+        // Like 7z, zip handles its own I/O internally.
+        // Artifact digest: hash the completed output file in a second pass.
+        // Content digest: None (entries are compressed individually).
         (Some(Container::Zip), None) => {
-            let entries = zip::create(input, output, level, ctx)?;
-            Ok((entries, input_bytes_total))
+            let entries = zip::create(input, output, level, ctx, walk_entries)?;
+            let artifact = if checksum {
+                Some(hash_file(output)?)
+            } else {
+                None
+            };
+            Ok((entries, input_bytes_total, artifact, None))
         }
 
         // Tar container with a codec: write tar data through the encoder.
         //
         // Pattern for encoder-finish after tar:
-        //   1. Create `Box<dyn Encoder>` wrapping the output file.
-        //   2. Wrap it in a `WriteRef` that holds `&mut Box<dyn Encoder>`.
-        //   3. Pass `Box<WriteRef>` (a `Box<dyn Write>`) to `tar::create`.
-        //   4. After `tar::create` returns, call `Box::new(encoder).finish()`
-        //      on the encoder we still own in this scope.
-        //   No downcast is required because we never move the encoder into the
-        //   box — only a mutable reference to it.
+        //   1. Create `Box<dyn Encoder>` wrapping the output file (optionally
+        //      wrapped in a HashingWriter for the artifact digest).
+        //   2. Wrap the encoder in a WriteRef so tar::create can write through
+        //      it; optionally insert a HashingWriter between the tar bytes and
+        //      the encoder for the content digest.
+        //   3. After `tar::create` returns, call `encoder.finish()`.
+        //
+        // Tee points:
+        //   - Artifact: HashingWriter wraps the output File (outermost layer).
+        //   - Content: HashingWriter sits between tar output and the encoder
+        //     (so the raw tar bytes are hashed before codec compression).
         (Some(Container::Tar), Some(codec)) => {
+            let artifact_hasher: Option<Arc<Mutex<Sha256>>> = if checksum {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+            let content_hasher: Option<Arc<Mutex<Sha256>>> = if checksum {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+
             let out_file = fs::File::create(output)?;
-            let mut encoder: Box<dyn Encoder> = new_encoder(codec, Box::new(out_file), level)?;
+
+            // Build the encoder, optionally wrapping the file in a
+            // HashingWriter first for the artifact digest.
+            let mut encoder: Box<dyn Encoder> = if let Some(ref ah) = artifact_hasher {
+                let hw = HashingWriter::new(out_file, Arc::clone(ah));
+                new_encoder(codec, Box::new(hw), level)?
+            } else {
+                new_encoder(codec, Box::new(out_file), level)?
+            };
+
             let entries = {
-                let write_ref = WriteRef::new(&mut encoder);
-                // tar::create takes ownership of the Box<dyn Write> for the
-                // duration of the archive build.  After it returns, write_ref
-                // (and the mutable borrow on encoder) is released.
-                let (n, _) = tar::create(input, Box::new(write_ref), ctx)?;
-                n
+                // Build the writer passed to tar::create.  When a content
+                // hasher is active, insert it between the tar stream and the
+                // encoder so we hash the raw (uncompressed) tar bytes.
+                if let Some(ref ch) = content_hasher {
+                    let content_hw =
+                        HashingWriter::new(WriteRef::new(&mut encoder), Arc::clone(ch));
+                    let (n, _) = tar::create(input, Box::new(content_hw), ctx, walk_entries)?;
+                    n
+                } else {
+                    let write_ref = WriteRef::new(&mut encoder);
+                    let (n, _) = tar::create(input, Box::new(write_ref), ctx, walk_entries)?;
+                    n
+                }
             };
             // encoder borrow ends here; safe to call finish.
             encoder.finish()?;
-            Ok((entries, input_bytes_total))
+
+            let artifact = artifact_hasher.map(finalize_shared);
+            let content = content_hasher.map(finalize_shared);
+
+            Ok((entries, input_bytes_total, artifact, content))
         }
 
         // Plain tar (no codec).
+        //
+        // Content = artifact (the tar stream IS the output file).
+        // Tee the output file through a HashingWriter.
         (Some(Container::Tar), None) => {
+            let artifact_hasher: Option<Arc<Mutex<Sha256>>> = if checksum {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+
             let out_file = fs::File::create(output)?;
-            let (entries, _) = tar::create(input, Box::new(out_file), ctx)?;
-            Ok((entries, input_bytes_total))
+
+            let entries = if let Some(ref ah) = artifact_hasher {
+                let hw = HashingWriter::new(out_file, Arc::clone(ah));
+                let (n, _) = tar::create(input, Box::new(hw), ctx, walk_entries)?;
+                n
+            } else {
+                let (n, _) = tar::create(input, Box::new(out_file), ctx, walk_entries)?;
+                n
+            };
+
+            // Plain tar: content == artifact — emit both with the same value.
+            let artifact = artifact_hasher.map(finalize_shared);
+            let content = artifact.clone();
+
+            Ok((entries, input_bytes_total, artifact, content))
         }
 
         // Codec-only + file input (silent-tar already resolved dirs above).
+        //
+        // Artifact: HashingWriter wraps the output File (outermost layer).
+        // Content: HashingReader wraps the input file (hash the input bytes
+        //   as they are read, before compression).
         (None, Some(codec)) => {
-            let mut in_file = fs::File::open(input)?;
+            let artifact_hasher: Option<Arc<Mutex<Sha256>>> = if checksum {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+            let content_hasher: Option<Arc<Mutex<Sha256>>> = if checksum {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+
+            let in_file = fs::File::open(input)?;
             let out_file = fs::File::create(output)?;
-            let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
-            let input_bytes = copy_with_progress(&mut in_file, &mut *encoder, ctx)?;
-            Box::new(encoder).finish()?;
-            Ok((1, input_bytes))
+
+            // Optionally hash the input (content digest).
+            let input_bytes = if let Some(ref ch) = content_hasher {
+                let mut hashing_in = HashingReader::new(in_file, Arc::clone(ch));
+                // Build encoder, optionally wrapping output in HashingWriter.
+                if let Some(ref ah) = artifact_hasher {
+                    let hw = HashingWriter::new(out_file, Arc::clone(ah));
+                    let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                    let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
+                    Box::new(encoder).finish()?;
+                    n
+                } else {
+                    let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                    let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
+                    Box::new(encoder).finish()?;
+                    n
+                }
+            } else if let Some(ref ah) = artifact_hasher {
+                let hw = HashingWriter::new(out_file, Arc::clone(ah));
+                let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                let mut in_file2 = in_file; // reuse (no content hasher in this branch)
+                let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
+                Box::new(encoder).finish()?;
+                n
+            } else {
+                let mut in_file2 = in_file;
+                let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
+                Box::new(encoder).finish()?;
+                n
+            };
+
+            let artifact = artifact_hasher.map(finalize_shared);
+            let content = content_hasher.map(finalize_shared);
+
+            Ok((1, input_bytes, artifact, content))
         }
 
         _ => {
@@ -375,6 +616,45 @@ pub fn extract(
         });
     }
 
+    // --- Artifact verify: stream-hash the input BEFORE creating dest files ---
+    //
+    // We check the artifact digest before create_dir_all so that if there
+    // is a mismatch, the destination directory has never been touched.
+    // Note: create_dir_all is called after this point but before do_extract,
+    // so an empty dest dir may be created; files are what matter.
+    if let Some(ref expected) = opts.verify_sha256 {
+        let actual = hash_file(input)?;
+        if actual != *expected {
+            return Err(Error::ChecksumMismatch {
+                kind: "artifact",
+                expected: expected.clone(),
+                actual,
+            });
+        }
+    }
+
+    // --- Guard: content verify is unsupported for zip/7z/rar ---
+    //
+    // Those formats compress entries individually; no canonical content
+    // stream exists.  Refuse early so the caller gets a clear error.
+    if opts.verify_content_sha256.is_some() {
+        let unsupported = matches!(
+            (format.container, format.codec),
+            (Some(Container::Zip), None)
+                | (Some(Container::SevenZ), None)
+        );
+        #[cfg(feature = "rar")]
+        let unsupported = unsupported
+            || matches!((format.container, format.codec), (Some(Container::Rar), None));
+        if unsupported {
+            return Err(Error::UnsupportedOperation {
+                format: format.to_string(),
+                operation: "verify_content_sha256 — zip/7z/rar have no single content stream"
+                    .into(),
+            });
+        }
+    }
+
     // --- Create destination ---
     fs::create_dir_all(dest)?;
 
@@ -394,7 +674,14 @@ pub fn extract(
     };
 
     // --- Dispatch ---
-    let (entries, input_bytes) = do_extract(input, dest, format, opts.overwrite, &mut ctx)?;
+    let (entries, input_bytes) = do_extract(
+        input,
+        dest,
+        format,
+        opts.overwrite,
+        opts.verify_content_sha256.as_deref(),
+        &mut ctx,
+    )?;
 
     let output_bytes: u64 = sum_dir_size(dest).unwrap_or(0);
 
@@ -402,13 +689,20 @@ pub fn extract(
         input_bytes,
         output_bytes,
         entries,
+        entries_excluded: 0,
         duration: start.elapsed(),
+        sha256: None,
+        content_sha256: None,
     })
 }
 
 /// Inner dispatch for extract.
 ///
 /// Returns `(entry_count, input_bytes_consumed)`.
+///
+/// `verify_content_sha256` is the expected content digest (if any).  It is
+/// checked after the stream is fully consumed.  For zip/7z/rar, passing
+/// `Some(_)` is rejected before calling this function (in `extract`).
 ///
 /// # Progress accounting
 ///
@@ -428,6 +722,7 @@ fn do_extract(
     dest: &Path,
     format: Format,
     overwrite: bool,
+    verify_content_sha256: Option<&str>,
     ctx: &mut OpCtx<'_>,
 ) -> Result<(u64, u64)> {
     match (format.container, format.codec) {
@@ -474,72 +769,221 @@ fn do_extract(
         // progress.bytes_done from the atomic counter instead of adding the
         // (larger) decompressed count.  This guarantees bytes_done ≤ bytes_total
         // throughout extraction.
+        //
+        // Content digest: insert a HashingReader between the decoder (or raw
+        // file for plain tar) and the tar backend.  The tar sniff has already
+        // happened (this path uses the Container::Tar branch, not the codec-only
+        // branch), so all bytes read here are actual tar content bytes.
         (Some(Container::Tar), codec_opt) => {
             let file = fs::File::open(input)?;
             let counter = Arc::new(AtomicU64::new(0));
             let counting = AtomicCountingReader::new(file, Arc::clone(&counter));
-            let reader: Box<dyn Read> = if let Some(codec) = codec_opt {
+
+            let content_hasher: Option<Arc<Mutex<Sha256>>> = if verify_content_sha256.is_some() {
+                Some(Arc::new(Mutex::new(Sha256::new())))
+            } else {
+                None
+            };
+
+            let decoded: Box<dyn Read> = if let Some(codec) = codec_opt {
                 new_decoder(codec, Box::new(counting))?
             } else {
                 Box::new(counting)
             };
-            let entries = tar::extract(reader, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
+
+            // Optionally insert hashing reader before tar backend.
+            let reader: Box<dyn Read> = if let Some(ref ch) = content_hasher {
+                Box::new(HashingReader::new(decoded, Arc::clone(ch)))
+            } else {
+                decoded
+            };
+
+            let (entries, mut remainder) =
+                tar::extract(reader, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
+
+            // Drain any remaining bytes from the reader.  The tar crate stops
+            // reading after the first end-of-archive zero block; there may be
+            // one more zero block (512 bytes) that was written by the builder
+            // but not read.  Draining ensures the HashingReader sees all bytes
+            // that were hashed on the compress side.
+            if content_hasher.is_some() {
+                let mut discard = [0u8; 512];
+                loop {
+                    match remainder.read(&mut discard) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+            }
+
             // Emit a final progress update at the exact compressed byte count.
             let compressed = counter.load(Ordering::Relaxed);
             ctx.progress.bytes_done = compressed;
             (ctx.on_progress)(&ctx.progress);
+
+            // Verify content digest after stream fully consumed.
+            if let (Some(expected), Some(ch)) = (verify_content_sha256, content_hasher) {
+                let actual = finalize_shared(ch);
+                if actual != expected {
+                    return Err(Error::ChecksumMismatch {
+                        kind: "content",
+                        expected: expected.to_owned(),
+                        actual,
+                    });
+                }
+            }
+
             Ok((entries, compressed))
         }
 
         // Codec-only stream.
+        //
+        // Content digest: wrap the decoder output in a HashingReader BEFORE
+        // the tar sniff so that sniffed bytes are hashed exactly once.  The
+        // sniff prefix is re-chained via Cursor but the hashing happens at the
+        // original read — the replayed prefix is NOT hashed a second time.
+        //
+        // Implementation: we wrap the decoder in a HashingReader, sniff from
+        // that, then chain the sniff bytes back.  Since we took those bytes
+        // from the HashingReader they are already in the hash.  The Cursor
+        // replay goes to tar::extract / out_file directly, bypassing the hasher.
         (None, Some(codec)) => {
             let file = fs::File::open(input)?;
             let counter = Arc::new(AtomicU64::new(0));
             let counting = AtomicCountingReader::new(file, Arc::clone(&counter));
-            let mut decoder = new_decoder(codec, Box::new(counting))?;
+            let decoder_box = new_decoder(codec, Box::new(counting))?;
 
-            // Sniff the first 512 decompressed bytes for a tar ustar magic.
-            let (is_tar, sniff_bytes) = sniff_tar_prefix(&mut *decoder)?;
-
-            if is_tar {
-                // Re-chain the sniffed prefix with the remaining decoder stream.
-                let prefix = Cursor::new(sniff_bytes);
-                let chained: Box<dyn Read + '_> = Box::new(prefix.chain(decoder));
-                let entries = tar::extract(
-                    chained,
-                    dest,
-                    overwrite,
-                    ctx,
-                    Some(Arc::clone(&counter)),
-                )?;
-                // Emit a final progress update at the exact compressed byte count.
-                let compressed = counter.load(Ordering::Relaxed);
-                ctx.progress.bytes_done = compressed;
-                (ctx.on_progress)(&ctx.progress);
-                Ok((entries, compressed))
+            let content_hasher: Option<Arc<Mutex<Sha256>>> = if verify_content_sha256.is_some() {
+                Some(Arc::new(Mutex::new(Sha256::new())))
             } else {
-                // Single-file decode: determine the output file name.
-                let out_name = output_name_for_codec_file(input, codec)?;
-                let out_path = dest.join(&out_name);
+                None
+            };
 
-                if out_path.exists() && !overwrite {
-                    return Err(Error::AlreadyExists { path: out_path });
+            // Build a hashing-or-plain reader over the decoded stream.
+            // We need to sniff from this reader; bytes taken here are hashed.
+            if let Some(ref ch) = content_hasher {
+                let mut hashing_decoder = HashingReader::new(decoder_box, Arc::clone(ch));
+
+                let (is_tar, sniff_bytes) = sniff_tar_prefix(&mut hashing_decoder)?;
+
+                if is_tar {
+                    // Re-chain the sniffed prefix (already hashed) with the
+                    // remaining hashing decoder.  The Cursor replay bytes skip
+                    // the hasher — correct, they were already counted.
+                    let prefix = Cursor::new(sniff_bytes);
+                    let chained: Box<dyn Read + '_> =
+                        Box::new(prefix.chain(hashing_decoder));
+                    let (entries, mut remainder) = tar::extract(
+                        chained,
+                        dest,
+                        overwrite,
+                        ctx,
+                        Some(Arc::clone(&counter)),
+                    )?;
+
+                    // Drain remaining bytes so the HashingReader sees the full
+                    // decompressed stream (including trailing end-of-archive blocks
+                    // that the tar crate leaves unread).
+                    let mut discard = [0u8; 512];
+                    loop {
+                        match remainder.read(&mut discard) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => {}
+                        }
+                    }
+
+                    let compressed = counter.load(Ordering::Relaxed);
+                    ctx.progress.bytes_done = compressed;
+                    (ctx.on_progress)(&ctx.progress);
+
+                    // Verify after stream consumed.
+                    if let Some(expected) = verify_content_sha256 {
+                        let actual = finalize_shared(Arc::clone(ch));
+                        if actual != expected {
+                            return Err(Error::ChecksumMismatch {
+                                kind: "content",
+                                expected: expected.to_owned(),
+                                actual,
+                            });
+                        }
+                    }
+
+                    Ok((entries, compressed))
+                } else {
+                    // Single-file decode.
+                    let out_name = output_name_for_codec_file(input, codec)?;
+                    let out_path = dest.join(&out_name);
+
+                    if out_path.exists() && !overwrite {
+                        return Err(Error::AlreadyExists { path: out_path });
+                    }
+
+                    ctx.set_entry(out_name.to_string_lossy().as_ref());
+                    ctx.check_cancel()?;
+
+                    let mut out_file = fs::File::create(&out_path)?;
+                    // Write the already-sniffed (already hashed) bytes first,
+                    // then copy the rest through the hashing decoder.
+                    out_file.write_all(&sniff_bytes)?;
+                    copy_decoder_synced(&mut hashing_decoder, &mut out_file, ctx, &counter)?;
+
+                    let compressed = counter.load(Ordering::Relaxed);
+                    ctx.progress.bytes_done = compressed;
+                    (ctx.on_progress)(&ctx.progress);
+
+                    // Verify after stream consumed.
+                    if let Some(expected) = verify_content_sha256 {
+                        let actual = finalize_shared(Arc::clone(ch));
+                        if actual != expected {
+                            return Err(Error::ChecksumMismatch {
+                                kind: "content",
+                                expected: expected.to_owned(),
+                                actual,
+                            });
+                        }
+                    }
+
+                    Ok((1, compressed))
                 }
+            } else {
+                // No content hashing — original path.
+                let mut decoder = decoder_box;
+                let (is_tar, sniff_bytes) = sniff_tar_prefix(&mut *decoder)?;
 
-                ctx.set_entry(out_name.to_string_lossy().as_ref());
-                ctx.check_cancel()?;
+                if is_tar {
+                    let prefix = Cursor::new(sniff_bytes);
+                    let chained: Box<dyn Read + '_> = Box::new(prefix.chain(decoder));
+                    let (entries, _remainder) = tar::extract(
+                        chained,
+                        dest,
+                        overwrite,
+                        ctx,
+                        Some(Arc::clone(&counter)),
+                    )?;
+                    let compressed = counter.load(Ordering::Relaxed);
+                    ctx.progress.bytes_done = compressed;
+                    (ctx.on_progress)(&ctx.progress);
+                    Ok((entries, compressed))
+                } else {
+                    let out_name = output_name_for_codec_file(input, codec)?;
+                    let out_path = dest.join(&out_name);
 
-                let mut out_file = fs::File::create(&out_path)?;
-                // Write the already-sniffed bytes first, then copy the rest,
-                // syncing bytes_done from the compressed-bytes counter per
-                // chunk so bytes_done never exceeds bytes_total.
-                out_file.write_all(&sniff_bytes)?;
-                copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
+                    if out_path.exists() && !overwrite {
+                        return Err(Error::AlreadyExists { path: out_path });
+                    }
 
-                let compressed = counter.load(Ordering::Relaxed);
-                ctx.progress.bytes_done = compressed;
-                (ctx.on_progress)(&ctx.progress);
-                Ok((1, compressed))
+                    ctx.set_entry(out_name.to_string_lossy().as_ref());
+                    ctx.check_cancel()?;
+
+                    let mut out_file = fs::File::create(&out_path)?;
+                    out_file.write_all(&sniff_bytes)?;
+                    copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
+
+                    let compressed = counter.load(Ordering::Relaxed);
+                    ctx.progress.bytes_done = compressed;
+                    (ctx.on_progress)(&ctx.progress);
+                    Ok((1, compressed))
+                }
             }
         }
 
@@ -774,6 +1218,26 @@ fn output_name_for_codec_file(input: &Path, codec: Codec) -> Result<PathBuf> {
         })
         .unwrap_or_else(|| "output.out".into());
     Ok(PathBuf::from(base))
+}
+
+/// Stream-hash an entire file and return the lowercase SHA-256 hex digest.
+///
+/// Used for zip/7z artifact digest computation after the archive backends have
+/// finished writing, since those formats do their own internal I/O and cannot
+/// be teed during creation.
+fn hash_file(path: &Path) -> Result<String> {
+    use sha2::Digest as _;
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_digest(hasher))
 }
 
 // ---------------------------------------------------------------------------

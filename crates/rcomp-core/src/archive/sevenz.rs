@@ -49,6 +49,7 @@ use sevenz_rust2::{
 use crate::{
     Error, Level, Result,
     progress::Entry,
+    walk::WalkEntry,
 };
 
 use super::{
@@ -126,7 +127,11 @@ impl<R: Read> Read for CountingReader<R> {
 ///   directory itself is *not* included as an entry; its children are stored
 ///   relative to `src`.  For example, archiving `photos/` yields entries
 ///   `a.jpg` and `sub/b.jpg`, not `photos/a.jpg`.
-/// - If `src` is a **file**, a single entry is written using the file's name.
+///   When `walk_entries` is `Some`, those pre-computed entries are used
+///   directly (filtering already applied) instead of doing a fresh recursive
+///   `read_dir` walk.
+/// - If `src` is a **file**, `walk_entries` is ignored and a single entry is
+///   written using the file's name.
 /// - **Symlinks** are not preserved as symlink entries.  On all platforms the
 ///   symlink-target's data is stored as a regular file entry (dereferenced).
 /// - Entries within each directory are processed in sorted order for
@@ -154,6 +159,7 @@ pub(crate) fn create(
     out: &Path,
     level: Level,
     ctx: &mut OpCtx<'_>,
+    walk_entries: Option<&[WalkEntry]>,
 ) -> Result<u64> {
     let preset = lzma2_preset(level);
     let lzma2_opts = Lzma2Options::from_level(preset);
@@ -167,14 +173,24 @@ pub(crate) fn create(
     let meta = fs::symlink_metadata(src)?;
 
     if meta.is_dir() {
-        let entries = collect_dir_entries(src)?;
-        for (rel_path, abs_path) in entries {
-            let entry_name = rel_path_to_7z_name(&rel_path);
-            ctx.set_entry(&entry_name);
-            ctx.check_cancel()?;
-
-            push_entry(&mut writer, &abs_path, &entry_name, ctx)?;
-            count += 1;
+        if let Some(entries) = walk_entries {
+            // Use the pre-computed filtered entries (from the shared walker).
+            for we in entries {
+                let entry_name = rel_path_to_7z_name(&we.rel);
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                push_entry(&mut writer, &we.abs, &entry_name, ctx)?;
+                count += 1;
+            }
+        } else {
+            let entries = collect_dir_entries(src)?;
+            for (rel_path, abs_path) in entries {
+                let entry_name = rel_path_to_7z_name(&rel_path);
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                push_entry(&mut writer, &abs_path, &entry_name, ctx)?;
+                count += 1;
+            }
         }
     } else {
         // Single file: use just the file name as the archive entry name.
@@ -539,7 +555,7 @@ mod tests {
         let token = CancelToken::default();
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
-        create(src, &archive_path, level, &mut ctx).expect("create failed");
+        create(src, &archive_path, level, &mut ctx, None).expect("create failed");
         (archive_path, tmp)
     }
 
@@ -598,7 +614,7 @@ mod tests {
 
         let out_dir = TempDir::new().unwrap();
         let archive_path = out_dir.path().join("out.7z");
-        let n = create(&src_file, &archive_path, Level::Best, &mut ctx).expect("create failed");
+        let n = create(&src_file, &archive_path, Level::Best, &mut ctx, None).expect("create failed");
         assert_eq!(n, 1, "single file should yield 1 entry");
 
         let dest = TempDir::new().unwrap();

@@ -37,6 +37,7 @@ use zip::{
 use crate::{
     Error, Level, Result,
     progress::{Entry, copy_with_progress},
+    walk::WalkEntry,
 };
 
 use super::{
@@ -82,7 +83,11 @@ fn rel_path_to_zip_name(rel: &Path) -> String {
 ///   directory itself is *not* included as an entry; its children are stored
 ///   relative to `src`.  For example, archiving `photos/` yields entries
 ///   `a.jpg` and `sub/b.jpg`, not `photos/a.jpg`.
-/// - If `src` is a **file**, a single entry is written using the file's name.
+///   When `walk_entries` is `Some`, those pre-computed entries are used
+///   directly (filtering already applied) instead of doing a fresh recursive
+///   `read_dir` walk.
+/// - If `src` is a **file**, `walk_entries` is ignored and a single entry is
+///   written using the file's name.
 /// - On unix, **symlinks** are preserved as symlink entries (not dereferenced).
 ///   On non-unix the symlink target file is stored as a regular file.
 /// - Entries within each directory are processed in sorted order for
@@ -108,6 +113,7 @@ pub(crate) fn create(
     out: &Path,
     level: Level,
     ctx: &mut OpCtx<'_>,
+    walk_entries: Option<&[WalkEntry]>,
 ) -> Result<u64> {
     let clevel = deflate_level(level);
     let file = fs::File::create(out)?;
@@ -117,14 +123,24 @@ pub(crate) fn create(
     let meta = fs::symlink_metadata(src)?;
 
     if meta.is_dir() {
-        let entries = collect_dir_entries(src)?;
-        for (rel_path, abs_path) in entries {
-            let entry_name = rel_path_to_zip_name(&rel_path);
-            ctx.set_entry(&entry_name);
-            ctx.check_cancel()?;
-
-            append_entry(&mut zip, &abs_path, &entry_name, clevel, ctx)?;
-            count += 1;
+        if let Some(entries) = walk_entries {
+            // Use the pre-computed filtered entries (from the shared walker).
+            for we in entries {
+                let entry_name = rel_path_to_zip_name(&we.rel);
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                append_entry(&mut zip, &we.abs, &entry_name, clevel, ctx)?;
+                count += 1;
+            }
+        } else {
+            let entries = collect_dir_entries(src)?;
+            for (rel_path, abs_path) in entries {
+                let entry_name = rel_path_to_zip_name(&rel_path);
+                ctx.set_entry(&entry_name);
+                ctx.check_cancel()?;
+                append_entry(&mut zip, &abs_path, &entry_name, clevel, ctx)?;
+                count += 1;
+            }
         }
     } else {
         // Single file: use just the file name as the archive entry name.
@@ -523,7 +539,7 @@ mod tests {
         let token = CancelToken::default();
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
-        create(src, &zip_path, level, &mut ctx).expect("create failed");
+        create(src, &zip_path, level, &mut ctx, None).expect("create failed");
         (zip_path, tmp)
     }
 
@@ -582,7 +598,7 @@ mod tests {
 
         let out_dir = TempDir::new().unwrap();
         let zip_path = out_dir.path().join("out.zip");
-        let n = create(&src_file, &zip_path, Level::Best, &mut ctx).expect("create failed");
+        let n = create(&src_file, &zip_path, Level::Best, &mut ctx, None).expect("create failed");
         assert_eq!(n, 1, "single file should yield 1 entry");
 
         let dest = TempDir::new().unwrap();

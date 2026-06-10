@@ -20,6 +20,8 @@ tar = { workspace = true }
 zip = { workspace = true }
 filetime = { workspace = true }
 sevenz-rust2 = { workspace = true }
+ignore = { workspace = true }
+sha2 = { workspace = true }
 unrar = { workspace = true, optional = true }
 
 [features]

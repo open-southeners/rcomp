@@ -40,7 +40,9 @@ pub mod format;
 pub mod level;
 pub mod progress;
 mod archive;
+pub(crate) mod hash;
 mod ops;
+pub(crate) mod walk;
 
 pub use codec::{Encoder, new_decoder, new_encoder};
 pub use detect::{detect, detect_from_bytes, detect_from_extension, split_format_suffix};

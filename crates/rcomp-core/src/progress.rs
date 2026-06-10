@@ -62,8 +62,34 @@ pub struct Report {
     pub output_bytes: u64,
     /// Number of archive entries processed.
     pub entries: u64,
+    /// Number of filesystem entries that were excluded from the archive.
+    ///
+    /// Non-zero only when a directory input was compressed with
+    /// [`crate::CompressOptions::follow_gitignore`] or
+    /// [`crate::CompressOptions::exclude`] active and at least one path was
+    /// filtered out.  Always `0` for extraction and file-input compression.
+    pub entries_excluded: u64,
     /// Wall-clock time the operation took.
     pub duration: Duration,
+    /// SHA-256 digest of the compressed output artifact, as a lowercase hex
+    /// string.
+    ///
+    /// `Some` only when [`crate::CompressOptions::checksum`] was `true`.
+    /// `None` otherwise and for all extract operations.
+    pub sha256: Option<String>,
+    /// SHA-256 digest of the pre-compression content stream, as a lowercase
+    /// hex string.
+    ///
+    /// `Some` only when [`crate::CompressOptions::checksum`] was `true` AND
+    /// the operation has a single identifiable pre-compression byte stream:
+    ///
+    /// - **codec-only, file input** — digest of the input file bytes.
+    /// - **tar + codec** — digest of the tar byte stream (before encoding).
+    /// - **plain tar** — same bytes as `sha256` (both are always equal for
+    ///   plain tar since the content *is* the artifact).
+    ///
+    /// `None` for zip, 7z, and when `checksum` is `false`.
+    pub content_sha256: Option<String>,
 }
 
 impl Report {
@@ -181,7 +207,10 @@ mod tests {
             input_bytes: 1000,
             output_bytes: 250,
             entries: 1,
+            entries_excluded: 0,
             duration: Duration::from_millis(10),
+            sha256: None,
+            content_sha256: None,
         };
         let ratio = report.ratio();
         assert!(
@@ -196,7 +225,10 @@ mod tests {
             input_bytes: 0,
             output_bytes: 0,
             entries: 0,
+            entries_excluded: 0,
             duration: Duration::ZERO,
+            sha256: None,
+            content_sha256: None,
         };
         assert_eq!(report.ratio(), 0.0);
     }
@@ -208,7 +240,10 @@ mod tests {
             input_bytes: 10,
             output_bytes: 18,
             entries: 1,
+            entries_excluded: 0,
             duration: Duration::from_nanos(1),
+            sha256: None,
+            content_sha256: None,
         };
         assert!(report.ratio() > 1.0);
     }
