@@ -1,0 +1,168 @@
+# Release workflow — publishes rcomp-core then rcomp to crates.io.
+#
+# NOTE: This repo had no remote when this file was written; the first real
+# run happens once the remote is created and a GitHub release is published.
+#
+# Trigger: publishing a GitHub release (tag form: v<version>, e.g. v0.1.0).
+# Steps:
+#   1. Guard: tag must match [workspace.package].version in Cargo.toml.
+#   2. Sanity: cargo publish --dry-run for rcomp-core (full verify is safe).
+#      NO dry-run step for rcomp — it cannot be packaged until rcomp-core is
+#      live on the index (cargo strips the path dep and must resolve from
+#      crates.io; even --offline fails). This is documented in RELEASING.md.
+#   3. Publish rcomp-core (cargo >=1.66 blocks until the crate is in the index).
+#   4. Publish rcomp --no-verify with a retry loop for index propagation lag.
+#
+# Idempotency: if a previous run published rcomp-core but failed before rcomp,
+# re-running the release is safe.  The "already published" check queries the
+# crates.io sparse index (https://index.crates.io/<path>) before each publish
+# and skips the step if the exact version is already there and not yanked.
+# This lets a half-failed release be retried without manual intervention.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # ── Step 1: tag/version guard ──────────────────────────────────────────
+      # Extract the workspace version with cargo metadata + jq (jq is
+      # pre-installed on GitHub-hosted runners).  Strip the leading "v" from
+      # the release tag and compare.  Fail loudly before anything is published.
+      - name: Verify tag matches workspace version
+        # Use env: to inject the tag — never interpolate github context
+        # expressions directly into run: commands (injection risk).
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # Strip leading "v" (v0.1.0 → 0.1.0)
+          TAG_VERSION="${TAG#v}"
+
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "rcomp") | .version')
+
+          echo "Release tag version : ${TAG_VERSION}"
+          echo "Cargo workspace version: ${CARGO_VERSION}"
+
+          if [ "${TAG_VERSION}" != "${CARGO_VERSION}" ]; then
+            echo "::error::Tag '${TAG}' does not match workspace version '${CARGO_VERSION}'."
+            echo "::error::Bump [workspace.package].version in Cargo.toml and re-publish the release."
+            exit 1
+          fi
+
+          # Export for use in later steps via GITHUB_ENV
+          echo "RELEASE_VERSION=${CARGO_VERSION}" >> "$GITHUB_ENV"
+
+      # ── Step 2: sanity-publish rcomp-core (dry-run) ────────────────────────
+      # Full --dry-run + verify works for rcomp-core because it has no
+      # unpublished path dependencies.
+      - name: Dry-run publish rcomp-core
+        run: cargo publish -p rcomp-core --dry-run --locked
+
+      # ── Step 3: publish rcomp-core ─────────────────────────────────────────
+      # Idempotency: check the sparse index first.  If this exact version is
+      # already present (and not yanked) we skip the publish so a re-run after
+      # a partial failure doesn't error out with "already uploaded".
+      #
+      # Sparse index path layout (cargo reference):
+      #   1-char name  : 1/<name>
+      #   2-char name  : 2/<name>
+      #   3-char name  : 3/<first-char>/<name>
+      #   4+-char name : <first-2-chars>/<next-2-chars>/<name>
+      # "rcomp-core" (10 chars) → rc/om/rcomp-core
+      - name: Publish rcomp-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          CRATE="rcomp-core"
+          VERSION="${RELEASE_VERSION}"
+          INDEX_URL="https://index.crates.io/rc/om/${CRATE}"
+
+          # Query the sparse index; HTTP 404 means never published; HTTP 200
+          # returns NDJSON lines, one per version.
+          HTTP_CODE=$(curl -s -o /tmp/index_response.json -w "%{http_code}" "${INDEX_URL}")
+
+          ALREADY_PUBLISHED=false
+          if [ "${HTTP_CODE}" = "200" ]; then
+            # Look for a non-yanked entry with our exact version
+            if grep -q "\"vers\":\"${VERSION}\"" /tmp/index_response.json; then
+              YANKED=$(grep "\"vers\":\"${VERSION}\"" /tmp/index_response.json \
+                | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('yanked', False))")
+              if [ "${YANKED}" != "True" ]; then
+                echo "rcomp-core ${VERSION} is already published and not yanked — skipping."
+                ALREADY_PUBLISHED=true
+              fi
+            fi
+          fi
+
+          if [ "${ALREADY_PUBLISHED}" = "false" ]; then
+            echo "Publishing rcomp-core ${VERSION}…"
+            # cargo >=1.66 blocks here until the crate is visible in the index,
+            # so step 4 can safely depend on rcomp-core being resolvable.
+            cargo publish -p rcomp-core --locked
+          fi
+
+      # ── Step 4: publish rcomp ──────────────────────────────────────────────
+      # --no-verify because rcomp cannot be packaged/verified locally until
+      # rcomp-core is live on the index (see note at top of file).
+      #
+      # Retry loop (3 attempts, 30 s apart) as belt-and-braces against any
+      # residual index-propagation lag despite cargo's blocking wait above.
+      #
+      # Idempotency: same sparse-index check as for rcomp-core.
+      # "rcomp" (5 chars) → rc/om/rcomp
+      - name: Publish rcomp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          CRATE="rcomp"
+          VERSION="${RELEASE_VERSION}"
+          INDEX_URL="https://index.crates.io/rc/om/${CRATE}"
+
+          HTTP_CODE=$(curl -s -o /tmp/index_response_rcomp.json -w "%{http_code}" "${INDEX_URL}")
+
+          ALREADY_PUBLISHED=false
+          if [ "${HTTP_CODE}" = "200" ]; then
+            if grep -q "\"vers\":\"${VERSION}\"" /tmp/index_response_rcomp.json; then
+              YANKED=$(grep "\"vers\":\"${VERSION}\"" /tmp/index_response_rcomp.json \
+                | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('yanked', False))")
+              if [ "${YANKED}" != "True" ]; then
+                echo "rcomp ${VERSION} is already published and not yanked — skipping."
+                ALREADY_PUBLISHED=true
+              fi
+            fi
+          fi
+
+          if [ "${ALREADY_PUBLISHED}" = "false" ]; then
+            echo "Publishing rcomp ${VERSION}…"
+            # Retry up to 3 times with 30 s delays to handle index propagation lag.
+            for attempt in 1 2 3; do
+              echo "Attempt ${attempt}/3…"
+              if cargo publish -p rcomp --no-verify --locked; then
+                echo "rcomp ${VERSION} published successfully."
+                break
+              fi
+              if [ "${attempt}" -lt 3 ]; then
+                echo "Publish failed; retrying in 30 s…"
+                sleep 30
+              else
+                echo "::error::All 3 publish attempts for rcomp failed."
+                exit 1
+              fi
+            done
+          fi

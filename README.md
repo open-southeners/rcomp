@@ -12,8 +12,9 @@ consumer.
 cargo install rcomp
 ```
 
-Note: not yet published to crates.io. The first release will publish both
-crates automatically.
+Both `rcomp` and `rcomp-core` are published to crates.io automatically when a
+GitHub release is tagged.  See [RELEASING.md](RELEASING.md) for the release
+runbook.
 
 ## Usage
 
