@@ -57,6 +57,26 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `verify_file_sha256` export would do it). Cosmetic-priority: the operation
   still fails safely today, just with a worse message.
 
+- **Where:** root `Cargo.toml` `[workspace.package]` (+ README)
+  **What:** No `repository`/`homepage`/`documentation` metadata — `cargo
+  publish --dry-run` warns "manifest has no documentation, homepage or
+  repository" on every run, and the README has no CI badge. All blocked on
+  the GitHub remote URL, which doesn't exist yet.
+  **Fix:** Once the remote is created: add `repository =
+  "https://github.com/<org>/rcomp"` to `[workspace.package]` (crates inherit
+  it), consider `documentation = "https://docs.rs/rcomp-core"` for the core
+  crate, and add the CI badge to README.
+
+- **Where:** `.github/workflows/ci.yml` + `release.yml` (unverified by a real run)
+  **What:** Written ahead of the remote; validated locally (YAML parse, every
+  CI cargo command run green on Linux) but never executed by GitHub Actions.
+  Specifically unproven: the Windows and macOS test-matrix legs (C-dependency
+  builds: liblzma, lz4, bzip2), rust-cache behavior, the release tag guard,
+  crates.io auth, and the publish-core-then-cli sequencing/idempotency.
+  **Fix:** After the first push, watch the first CI run on all three OSes and
+  the first tagged release end-to-end; fix fallout then. Until then treat the
+  workflows as best-effort.
+
 - **Where:** `crates/rcomp-core/tests/fixtures/` (lz4 interop gap)
   **What:** No lz4 interop fixture: `lz4` is not on PATH and no crate in the
   local cargo registry bundles a reference frame-format file (`lz4-sys` only
