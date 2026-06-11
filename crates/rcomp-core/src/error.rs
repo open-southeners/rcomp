@@ -131,7 +131,10 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("[bad"), "should contain the pattern");
-        assert!(msg.contains("unclosed character class"), "should contain the message");
+        assert!(
+            msg.contains("unclosed character class"),
+            "should contain the message"
+        );
     }
 
     #[test]

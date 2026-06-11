@@ -61,7 +61,10 @@ pub(crate) fn encoder<'a>(
     w: Box<dyn Write + 'a>,
     level: Level,
 ) -> crate::Result<Box<dyn Encoder + 'a>> {
-    Ok(Box::new(Bzip2Encoder(BzEncoder::new(w, compression(level)))))
+    Ok(Box::new(Bzip2Encoder(BzEncoder::new(
+        w,
+        compression(level),
+    ))))
 }
 
 /// Create a bzip2 decoder reading compressed input from `r`.

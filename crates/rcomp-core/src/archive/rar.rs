@@ -34,22 +34,15 @@
 //! callbacks emitted during RAR extraction (consistent with zip and 7z).
 
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 use unrar::Archive;
 
-use crate::{
-    Error, Result,
-    progress::Entry,
-};
+use crate::{Error, Result, progress::Entry};
 
-use super::{
-    OpCtx,
-    sanitize::sanitize_entry_path,
-};
+use super::{OpCtx, sanitize::sanitize_entry_path};
 
 // ---------------------------------------------------------------------------
 // extract
@@ -130,9 +123,7 @@ pub(crate) fn extract(
         if is_directory {
             // Skip the payload (no bytes to extract for a directory entry).
             // create_dir_all is called after skip so the archive stays in sync.
-            open = header
-                .skip()
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            open = header.skip().map_err(|e| io::Error::other(e.to_string()))?;
             fs::create_dir_all(&out_path)?;
         } else {
             // Ensure parent directory exists before writing.
@@ -241,8 +232,7 @@ mod tests {
     /// Contents: one file named `VERSION` with content `"unrar-0.4.0"`.
     fn fixture() -> std::path::PathBuf {
         // Integration test binaries run from the crate root.
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sample.rar")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.rar")
     }
 
     // -----------------------------------------------------------------------

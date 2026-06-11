@@ -27,8 +27,7 @@ use std::{
 
 use flate2::{Compression, GzBuilder};
 use rcomp_core::{
-    CancelToken, CompressOptions, Error, ExtractOptions, Level,
-    compress, extract, list,
+    CancelToken, CompressOptions, Error, ExtractOptions, Level, compress, extract, list,
 };
 use tempfile::TempDir;
 
@@ -126,8 +125,14 @@ fn compress_extract_tar_gz_dir_roundtrip() {
     // Compress.
     let compress_report = compress(src.path(), &archive, &Default::default(), nop_progress)
         .expect("compress should succeed");
-    assert!(compress_report.entries > 0, "should have compressed entries");
-    assert!(compress_report.output_bytes > 0, "output should be non-empty");
+    assert!(
+        compress_report.entries > 0,
+        "should have compressed entries"
+    );
+    assert!(
+        compress_report.output_bytes > 0,
+        "output should be non-empty"
+    );
 
     // Extract.
     let extract_report = extract(&archive, dest.path(), &Default::default(), nop_progress)
@@ -200,7 +205,10 @@ fn silent_tar_dir_to_bz2_roundtrip() {
     // Compress with codec-only extension and directory input.
     let compress_report = compress(src.path(), &archive, &Default::default(), nop_progress)
         .expect("silent-tar compress should succeed");
-    assert!(compress_report.entries > 0, "should have entries (tar-wrapped)");
+    assert!(
+        compress_report.entries > 0,
+        "should have entries (tar-wrapped)"
+    );
 
     // Extract: should sniff tar magic inside the bzip2 stream and untar.
     let extract_report = extract(&archive, dest.path(), &Default::default(), nop_progress)
@@ -342,10 +350,7 @@ fn extract_gzip_embedded_filename_is_used() {
         out_file.exists(),
         "extracted file should use embedded name 'original-name.txt'"
     );
-    assert_eq!(
-        std::fs::read(&out_file).unwrap(),
-        b"embedded name content"
-    );
+    assert_eq!(std::fs::read(&out_file).unwrap(), b"embedded name content");
 }
 
 /// The embedded filename in the gzip header is attacker-controlled; only the
@@ -438,7 +443,10 @@ fn zip_all_levels_produce_decodable_archives() {
     ] {
         let archive = work.path().join(name);
         let dest = TempDir::new().unwrap();
-        let opts = CompressOptions { level: *level, ..Default::default() };
+        let opts = CompressOptions {
+            level: *level,
+            ..Default::default()
+        };
 
         compress(src_dir.path(), &archive, &opts, nop_progress)
             .unwrap_or_else(|e| panic!("compress {name} failed: {e}"));
@@ -498,8 +506,16 @@ fn list_zip_matches_created_tree() {
         .map(|e| e.path.to_string_lossy().into_owned())
         .collect();
 
-    assert!(names.contains("a.txt"), "expected a.txt in list; got {:?}", names);
-    assert!(names.contains("sub/b.txt"), "expected sub/b.txt in list; got {:?}", names);
+    assert!(
+        names.contains("a.txt"),
+        "expected a.txt in list; got {:?}",
+        names
+    );
+    assert!(
+        names.contains("sub/b.txt"),
+        "expected sub/b.txt in list; got {:?}",
+        names
+    );
 }
 
 #[test]
@@ -542,7 +558,11 @@ fn list_bz2_silent_tar_returns_tree_entries() {
     let entries = list(&archive).expect("list on silent-tar bz2 should succeed");
     let paths: HashSet<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
 
-    assert!(paths.contains(Path::new("a.txt")), "expected a.txt in list; got {:?}", paths);
+    assert!(
+        paths.contains(Path::new("a.txt")),
+        "expected a.txt in list; got {:?}",
+        paths
+    );
     assert!(
         paths.contains(Path::new("sub/b.txt")) || paths.contains(Path::new("sub\\b.txt")),
         "expected sub/b.txt in list; got {:?}",
@@ -574,7 +594,8 @@ fn list_zst_bare_single_file_returns_unsupported() {
     )
     .unwrap();
 
-    let err = list(&archive).expect_err("list on bare zst single-file should return UnsupportedOperation");
+    let err = list(&archive)
+        .expect_err("list on bare zst single-file should return UnsupportedOperation");
     assert!(
         matches!(err, rcomp_core::Error::UnsupportedOperation { .. }),
         "expected UnsupportedOperation, got {err:?}"
@@ -617,7 +638,10 @@ fn compress_overwrites_when_flag_set() {
     compress(src_dir.path(), &archive, &Default::default(), nop_progress).unwrap();
 
     // Overwrite should succeed.
-    let opts = CompressOptions { overwrite: true, ..Default::default() };
+    let opts = CompressOptions {
+        overwrite: true,
+        ..Default::default()
+    };
     compress(src_dir.path(), &archive, &opts, nop_progress)
         .expect("should succeed with overwrite=true");
 }
@@ -705,8 +729,8 @@ fn extract_pre_cancelled_returns_cancelled() {
         ..Default::default()
     };
 
-    let err = extract(&archive, dest.path(), &opts, nop_progress)
-        .expect_err("should return Cancelled");
+    let err =
+        extract(&archive, dest.path(), &opts, nop_progress).expect_err("should return Cancelled");
     assert!(
         matches!(err, Error::Cancelled),
         "expected Cancelled, got {err:?}"
@@ -725,8 +749,13 @@ fn compress_unknown_extension_returns_unknown_format() {
     let work = TempDir::new().unwrap();
     let weird_output = work.path().join("out.weird");
 
-    let err = compress(src_dir.path(), &weird_output, &Default::default(), nop_progress)
-        .expect_err("should fail with UnknownFormat");
+    let err = compress(
+        src_dir.path(),
+        &weird_output,
+        &Default::default(),
+        nop_progress,
+    )
+    .expect_err("should fail with UnknownFormat");
     assert!(
         matches!(err, Error::UnknownFormat { .. }),
         "expected UnknownFormat, got {err:?}"
@@ -985,8 +1014,7 @@ fn extract_zip_progress_bytes_total_is_none() {
 ///
 /// Contents: one file named `VERSION` with content `"unrar-0.4.0"` (11 bytes).
 fn rar_fixture() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sample.rar")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.rar")
 }
 
 /// RAR compress is always unsupported (RAR creation is proprietary).
@@ -1047,7 +1075,10 @@ fn rar_extract_fixture_produces_correct_tree() {
 
     let report = extract(&fixture, dest.path(), &Default::default(), nop_progress)
         .expect("rar extract should succeed");
-    assert!(report.entries > 0, "should have extracted at least one entry");
+    assert!(
+        report.entries > 0,
+        "should have extracted at least one entry"
+    );
 
     // sample.rar contains VERSION with content "unrar-0.4.0".
     let content = std::fs::read(dest.path().join("VERSION")).unwrap();
@@ -1061,7 +1092,12 @@ fn rar_list_fixture_matches_extract() {
     let fixture = rar_fixture();
 
     let entries = list(&fixture).expect("rar list should succeed");
-    assert_eq!(entries.len(), 1, "expected 1 entry in list; got {:?}", entries);
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected 1 entry in list; got {:?}",
+        entries
+    );
     assert_eq!(entries[0].path, Path::new("VERSION"));
     assert!(!entries[0].is_dir, "VERSION should not be a directory");
     assert_eq!(entries[0].size, 11, "VERSION size should be 11 bytes");

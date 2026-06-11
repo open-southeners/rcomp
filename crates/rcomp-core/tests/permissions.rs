@@ -11,11 +11,7 @@
 
 #![cfg(unix)]
 
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::Path,
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 use rcomp_core::{CompressOptions, ExtractOptions, compress, extract};
 use tempfile::TempDir;

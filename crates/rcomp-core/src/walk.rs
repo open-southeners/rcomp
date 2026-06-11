@@ -36,8 +36,7 @@
 //! walk is skipped and [`WalkResult::excluded`] is `0`.
 
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -232,16 +231,22 @@ fn build_walk(
         }
 
         let abs = entry.path().to_path_buf();
-        let rel = abs.strip_prefix(root).map_err(|_| {
-            Error::Io(std::io::Error::other("entry path not under root"))
-        })?.to_path_buf();
+        let rel = abs
+            .strip_prefix(root)
+            .map_err(|_| Error::Io(std::io::Error::other("entry path not under root")))?
+            .to_path_buf();
 
         // Use symlink_metadata so symlinks are not followed.
         let meta = fs::symlink_metadata(&abs)?;
         let is_dir = meta.is_dir();
         let size = if is_dir { 0 } else { meta.len() };
 
-        result.push(WalkEntry { abs, rel, is_dir, size });
+        result.push(WalkEntry {
+            abs,
+            rel,
+            is_dir,
+            size,
+        });
     }
 
     Ok(result)
@@ -435,7 +440,10 @@ mod tests {
         );
 
         // excluded count should be > 0
-        assert!(result.excluded > 0, "excluded should be > 0 when .gitignore filters something");
+        assert!(
+            result.excluded > 0,
+            "excluded should be > 0 when .gitignore filters something"
+        );
     }
 
     #[test]
@@ -510,7 +518,9 @@ mod tests {
             exclude: &[],
         };
         let result = collect(root, &opts).unwrap();
-        let names: Vec<_> = result.entries.iter()
+        let names: Vec<_> = result
+            .entries
+            .iter()
             .filter(|e| !e.is_dir)
             .map(|e| e.rel.to_string_lossy().into_owned())
             .collect();

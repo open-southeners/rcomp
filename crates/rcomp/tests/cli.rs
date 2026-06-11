@@ -175,12 +175,7 @@ fn compress_with_algo_bzip2_extensionless_output() {
     let out = tmp.path().join("myarchive");
 
     rcomp()
-        .args([
-            src.to_str().unwrap(),
-            out.to_str().unwrap(),
-            "-a",
-            "bzip2",
-        ])
+        .args([src.to_str().unwrap(), out.to_str().unwrap(), "-a", "bzip2"])
         .assert()
         .success();
 
@@ -227,8 +222,14 @@ fn extract_multi_root_creates_wrap_folder() {
         wrap_dir.exists(),
         "wrap folder dest/multi/ should be created for multi-root archive"
     );
-    assert!(wrap_dir.join("hello.txt").exists(), "hello.txt inside wrap folder");
-    assert!(wrap_dir.join("world.txt").exists(), "world.txt inside wrap folder");
+    assert!(
+        wrap_dir.join("hello.txt").exists(),
+        "hello.txt inside wrap folder"
+    );
+    assert!(
+        wrap_dir.join("world.txt").exists(),
+        "world.txt inside wrap folder"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +331,10 @@ fn extract_to_explicit_dest() {
         .success();
 
     assert!(dest.exists(), "dest dir should be created");
-    assert!(dest.join("file.txt").exists(), "file.txt should be extracted");
+    assert!(
+        dest.join("file.txt").exists(),
+        "file.txt should be extracted"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -366,18 +370,18 @@ fn ls_output_format() {
 
     for line in text.lines() {
         // Each line must be at least: 12 chars of size + 2 spaces + path.
-        assert!(
-            line.len() >= 14,
-            "line too short: {:?}",
-            line
-        );
+        assert!(line.len() >= 14, "line too short: {:?}", line);
         // The size field (first 12 chars) must be parseable as an integer.
         let size_str = line[..12].trim();
-        size_str.parse::<u64>().unwrap_or_else(|_| {
-            panic!("size field is not a number on line: {line:?}")
-        });
+        size_str
+            .parse::<u64>()
+            .unwrap_or_else(|_| panic!("size field is not a number on line: {line:?}"));
         // There must be exactly two spaces between size and path.
-        assert_eq!(&line[12..14], "  ", "separator must be two spaces: {line:?}");
+        assert_eq!(
+            &line[12..14],
+            "  ",
+            "separator must be two spaces: {line:?}"
+        );
     }
 }
 
@@ -550,7 +554,10 @@ fn brotli_mystery_file_infer_extract_no_output() {
         .assert()
         .success();
 
-    assert!(br_file.exists(), "source.txt.br should exist after compression");
+    assert!(
+        br_file.exists(),
+        "source.txt.br should exist after compression"
+    );
 
     // Step 3: rename the .br archive to an extensionless name, simulating a
     // "mystery download" whose format cannot be detected from extension or
@@ -677,7 +684,10 @@ fn ls_directories_have_trailing_slash() {
     let text = String::from_utf8(output).unwrap();
     // The subdirectory entry should appear with a trailing /.
     let has_dir_entry = text.lines().any(|l| l.ends_with('/'));
-    assert!(has_dir_entry, "expected at least one directory entry with trailing slash\n{text}");
+    assert!(
+        has_dir_entry,
+        "expected at least one directory entry with trailing slash\n{text}"
+    );
 }
 
 // ===========================================================================
@@ -726,10 +736,8 @@ fn compress_summary_line_format() {
 
     // Pattern: <output>  <in_human> → <out_human> (<ratio>%)  in <elapsed>
     // e.g.    /tmp/.../data.txt.gz  42 B → 38 B (90.5%)  in 2ms
-    let pattern = predicates::str::is_match(
-        r"(?m)^.+\.\S+\s{2}.+ → .+ \(\d+\.\d%\)\s{2}in .+$",
-    )
-    .unwrap();
+    let pattern =
+        predicates::str::is_match(r"(?m)^.+\.\S+\s{2}.+ → .+ \(\d+\.\d%\)\s{2}in .+$").unwrap();
 
     rcomp()
         .args([src.to_str().unwrap(), out.to_str().unwrap()])
@@ -757,10 +765,8 @@ fn extract_summary_line_format() {
     let dest = tmp.path().join("extract_summary_dest");
 
     // Pattern: extracted <N> entries to <path>  in <elapsed>
-    let pattern = predicates::str::is_match(
-        r"(?m)^extracted \d+ entries? to .+\s{2}in .+$",
-    )
-    .unwrap();
+    let pattern =
+        predicates::str::is_match(r"(?m)^extracted \d+ entries? to .+\s{2}in .+$").unwrap();
 
     rcomp()
         .args([archive.to_str().unwrap(), dest.to_str().unwrap()])
@@ -841,16 +847,7 @@ fn man_starts_with_th_and_contains_long_options() {
     // clap_mangen renders `--` as `\-\-` in troff, so we search for just the
     // option name (without the dashes) which appears in both forms.
     let long_opts = [
-        "algo",
-        "fast",
-        "best",
-        "edge",
-        "unwrap",
-        "yes",
-        "force",
-        "quiet",
-        "compress",
-        "extract",
+        "algo", "fast", "best", "edge", "unwrap", "yes", "force", "quiet", "compress", "extract",
     ];
     for opt in &long_opts {
         assert!(

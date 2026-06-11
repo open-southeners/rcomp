@@ -78,10 +78,7 @@ impl Encoder for BrotliEncoder<'_> {
         // writes the end-of-stream bytes, then returns the inner writer.
         // We take ownership of the `CompressorWriter` so that Drop does not
         // attempt a second finish.
-        let writer = self
-            .0
-            .take()
-            .expect("BrotliEncoder used after finish");
+        let writer = self.0.take().expect("BrotliEncoder used after finish");
         writer.into_inner();
         Ok(())
     }
@@ -115,8 +112,8 @@ mod tests {
     use std::io::Read;
 
     use super::super::test_util;
-    use crate::{Codec, Level};
     use crate::codec::{new_decoder, new_encoder};
+    use crate::{Codec, Level};
 
     #[test]
     fn roundtrip_fast() {

@@ -25,17 +25,16 @@ use std::{
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use filetime::FileTime;
 use tar::{Archive, Builder, EntryType, Header};
 
-use crate::{
-    Error, Result,
-    progress::Entry,
-    walk::WalkEntry,
-};
+use crate::{Error, Result, progress::Entry, walk::WalkEntry};
 
 use super::{
     OpCtx,
@@ -148,9 +147,9 @@ fn collect_dir_entries_recursive(
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let abs = entry.path();
-        let rel = abs.strip_prefix(root).map_err(|_| {
-            io::Error::other("failed to strip root prefix")
-        })?;
+        let rel = abs
+            .strip_prefix(root)
+            .map_err(|_| io::Error::other("failed to strip root prefix"))?;
         entries.push((rel.to_path_buf(), abs));
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -348,10 +347,7 @@ pub(crate) fn extract<'r>(
             let link_target = entry
                 .link_name()?
                 .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "symlink entry has no link name",
-                    )
+                    io::Error::new(io::ErrorKind::InvalidData, "symlink entry has no link name")
                 })?
                 .into_owned();
 
@@ -572,9 +568,15 @@ mod tests {
         let token = CancelToken::default();
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
-        extract(Box::new(Cursor::new(buf)), dest.path(), false, &mut ctx, None)
-            .map(|(_, _)| ())
-            .expect("extract failed");
+        extract(
+            Box::new(Cursor::new(buf)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .map(|(_, _)| ())
+        .expect("extract failed");
         dest
     }
 
@@ -677,8 +679,14 @@ mod tests {
         let mut cb2: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx2 = make_ctx!(token2, &mut *cb2);
 
-        let (n2, _) = extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx2, None)
-            .expect("extract failed");
+        let (n2, _) = extract(
+            Box::new(Cursor::new(&buf)),
+            dest.path(),
+            false,
+            &mut ctx2,
+            None,
+        )
+        .expect("extract failed");
         assert_eq!(n2, 1);
         assert_eq!(
             std::fs::read(dest.path().join("hello.txt")).unwrap(),
@@ -754,9 +762,15 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let err = extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx, None)
-            .err()
-            .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&buf)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::AlreadyExists { .. }),
@@ -779,7 +793,14 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        extract(Box::new(Cursor::new(&buf)), dest.path(), true, &mut ctx, None).unwrap();
+        extract(
+            Box::new(Cursor::new(&buf)),
+            dest.path(),
+            true,
+            &mut ctx,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(
             std::fs::read(dest.path().join("file.txt")).unwrap(),
@@ -808,10 +829,15 @@ mod tests {
         let mut ctx = make_ctx!(token, &mut *cb);
 
         let dest = TempDir::new().unwrap();
-        let err =
-            extract(Box::new(Cursor::new(&buf)), dest.path(), false, &mut ctx, None)
-                .err()
-                .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&buf)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::Cancelled),
@@ -942,9 +968,15 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .err()
-            .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&tar_bytes)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -964,9 +996,15 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .err()
-            .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&tar_bytes)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -987,9 +1025,15 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .err()
-            .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&tar_bytes)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),
@@ -1012,9 +1056,15 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let err = extract(Box::new(Cursor::new(&tar_bytes)), dest.path(), false, &mut ctx, None)
-            .err()
-            .expect("expected an error");
+        let err = extract(
+            Box::new(Cursor::new(&tar_bytes)),
+            dest.path(),
+            false,
+            &mut ctx,
+            None,
+        )
+        .err()
+        .expect("expected an error");
 
         assert!(
             matches!(err, Error::PathTraversal { .. }),

@@ -182,7 +182,9 @@ fn exclude_alone_filters_matching_paths() {
     let err_text = String::from_utf8(stderr).unwrap();
     // Both gitignore and --exclude are active.
     assert!(
-        err_text.contains("excluded") && err_text.contains(".gitignore") && err_text.contains("--exclude"),
+        err_text.contains("excluded")
+            && err_text.contains(".gitignore")
+            && err_text.contains("--exclude"),
         "stderr should mention both .gitignore and --exclude; got: {err_text:?}"
     );
 
@@ -369,7 +371,7 @@ fn multiple_excludes_work_together() {
         .args([
             root.to_str().unwrap(),
             out.to_str().unwrap(),
-            "--all",        // no .gitignore interference
+            "--all", // no .gitignore interference
             "--exclude",
             "*.txt",
             "--exclude",

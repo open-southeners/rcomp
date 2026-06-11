@@ -81,7 +81,10 @@ fn compress_with_overwrite_replaces_existing_file() {
     let out = work.path().join("out.tar.gz");
     std::fs::write(&out, b"old content").unwrap();
 
-    let opts = CompressOptions { overwrite: true, ..Default::default() };
+    let opts = CompressOptions {
+        overwrite: true,
+        ..Default::default()
+    };
     compress(&src, &out, &opts, nop).expect("compress with overwrite=true must succeed");
 
     // The sentinel must be gone — the file must be a real archive.
@@ -140,7 +143,10 @@ fn compress_output_is_existing_directory_returns_error() {
 
     // With overwrite: the guard is bypassed but File::create on a directory
     // must return an IO error — it must NOT silently clobber the directory.
-    let opts = CompressOptions { overwrite: true, ..Default::default() };
+    let opts = CompressOptions {
+        overwrite: true,
+        ..Default::default()
+    };
     let err2 = compress(&src, &out_dir, &opts, nop)
         .expect_err("compress with overwrite=true to a directory must still fail with Io");
     assert!(
@@ -170,8 +176,7 @@ fn extract_no_overwrite_single_collision_preserves_file() {
 
     // Build the archive.
     let archive = work.path().join("multi.tar.gz");
-    compress(&src, &archive, &Default::default(), nop)
-        .expect("initial compress must succeed");
+    compress(&src, &archive, &Default::default(), nop).expect("initial compress must succeed");
 
     // Set up a destination with a pre-existing file that will collide.
     let dest = TempDir::new().unwrap();
@@ -257,9 +262,11 @@ fn extract_with_overwrite_unrelated_files_untouched_on_success() {
     std::fs::write(&unrelated, unrelated_content).unwrap();
 
     // Extract with overwrite — must succeed.
-    let opts = ExtractOptions { overwrite: true, ..Default::default() };
-    extract(&archive, dest.path(), &opts, nop)
-        .expect("extract with overwrite=true must succeed");
+    let opts = ExtractOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    extract(&archive, dest.path(), &opts, nop).expect("extract with overwrite=true must succeed");
 
     // Unrelated file must be untouched.
     let after_unrelated = std::fs::read(&unrelated).unwrap();
@@ -290,9 +297,11 @@ fn extract_with_overwrite_replaces_colliding_file() {
     std::fs::write(&collider, b"stale content to be overwritten").unwrap();
 
     // Extract with overwrite.
-    let opts = ExtractOptions { overwrite: true, ..Default::default() };
-    extract(&archive, dest.path(), &opts, nop)
-        .expect("extract with overwrite=true must succeed");
+    let opts = ExtractOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    extract(&archive, dest.path(), &opts, nop).expect("extract with overwrite=true must succeed");
 
     // Colliding file must now have the archive's content.
     let after = std::fs::read(&collider).unwrap();
@@ -318,8 +327,7 @@ fn extract_zip_no_overwrite_single_collision_preserves_file() {
     let src = make_two_file_dir(&work);
 
     let archive = work.path().join("multi.zip");
-    compress(&src, &archive, &Default::default(), nop)
-        .expect("initial zip compress must succeed");
+    compress(&src, &archive, &Default::default(), nop).expect("initial zip compress must succeed");
 
     let dest = TempDir::new().unwrap();
     let collider = dest.path().join("a.txt");
@@ -356,7 +364,10 @@ fn extract_zip_with_overwrite_replaces_colliding_file() {
     let collider = dest.path().join("a.txt");
     std::fs::write(&collider, b"stale zip content").unwrap();
 
-    let opts = ExtractOptions { overwrite: true, ..Default::default() };
+    let opts = ExtractOptions {
+        overwrite: true,
+        ..Default::default()
+    };
     extract(&archive, dest.path(), &opts, nop)
         .expect("zip extract with overwrite=true must succeed");
 
@@ -382,8 +393,7 @@ fn compress_no_overwrite_cleanup_does_not_remove_existing_file() {
 
     // First compress: creates the archive.
     let archive = work.path().join("existing.tar.gz");
-    compress(&src_dir, &archive, &Default::default(), nop)
-        .expect("first compress must succeed");
+    compress(&src_dir, &archive, &Default::default(), nop).expect("first compress must succeed");
 
     let size_before = std::fs::metadata(&archive).unwrap().len();
     assert!(size_before > 0, "archive must be non-empty");

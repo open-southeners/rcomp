@@ -98,12 +98,20 @@ fn detect_gz_fixture_extensionless_by_magic() {
 #[test]
 fn extract_gz_fixture_to_known_content() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.txt.gz"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.txt.gz");
+    extract(
+        &fixture("sample.txt.gz"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.txt.gz");
 
     // gzip embedded filename is "sample.txt" — the output file should use it.
     let out = dest.path().join("sample.txt");
-    assert!(out.exists(), "sample.txt should be extracted (embedded filename)");
+    assert!(
+        out.exists(),
+        "sample.txt should be extracted (embedded filename)"
+    );
     assert_eq!(
         std::fs::read(&out).unwrap(),
         SAMPLE_TXT,
@@ -153,8 +161,13 @@ fn detect_bz2_fixture_extensionless_by_magic() {
 #[test]
 fn extract_bz2_fixture_to_known_content() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.txt.bz2"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.txt.bz2");
+    extract(
+        &fixture("sample.txt.bz2"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.txt.bz2");
     // Extension stripping: "sample.txt.bz2" → "sample.txt"
     let out = dest.path().join("sample.txt");
     assert!(out.exists(), "sample.txt should exist after bz2 extraction");
@@ -182,8 +195,13 @@ fn detect_xz_fixture_extensionless_by_magic() {
 #[test]
 fn extract_xz_fixture_to_known_content() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.txt.xz"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.txt.xz");
+    extract(
+        &fixture("sample.txt.xz"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.txt.xz");
     let out = dest.path().join("sample.txt");
     assert!(out.exists(), "sample.txt should exist after xz extraction");
     assert_eq!(std::fs::read(&out).unwrap(), SAMPLE_TXT);
@@ -210,8 +228,13 @@ fn detect_zst_fixture_extensionless_by_magic() {
 #[test]
 fn extract_zst_fixture_to_known_content() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.txt.zst"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.txt.zst");
+    extract(
+        &fixture("sample.txt.zst"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.txt.zst");
     let out = dest.path().join("sample.txt");
     assert!(out.exists(), "sample.txt should exist after zst extraction");
     assert_eq!(std::fs::read(&out).unwrap(), SAMPLE_TXT);
@@ -255,7 +278,9 @@ fn list_tar_fixture_returns_expected_entries() {
         "sample.tar list should contain sample_dir/sub/nested.txt; got {paths:?}"
     );
     assert!(
-        paths.iter().any(|p| p.ends_with("sub") || p.ends_with("sub/")),
+        paths
+            .iter()
+            .any(|p| p.ends_with("sub") || p.ends_with("sub/")),
         "sample.tar list should contain the sub/ directory; got {paths:?}"
     );
 }
@@ -263,10 +288,18 @@ fn list_tar_fixture_returns_expected_entries() {
 #[test]
 fn extract_tar_fixture_produces_correct_tree() {
     let dest = TempDir::new().unwrap();
-    let report = extract(&fixture("sample.tar"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.tar");
+    let report = extract(
+        &fixture("sample.tar"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.tar");
 
-    assert!(report.entries > 0, "should have extracted at least one entry");
+    assert!(
+        report.entries > 0,
+        "should have extracted at least one entry"
+    );
 
     let sample_txt = dest.path().join("sample_dir/sample.txt");
     assert!(sample_txt.exists(), "sample_dir/sample.txt should exist");
@@ -277,7 +310,10 @@ fn extract_tar_fixture_produces_correct_tree() {
     );
 
     let nested_txt = dest.path().join("sample_dir/sub/nested.txt");
-    assert!(nested_txt.exists(), "sample_dir/sub/nested.txt should exist");
+    assert!(
+        nested_txt.exists(),
+        "sample_dir/sub/nested.txt should exist"
+    );
     assert_eq!(
         std::fs::read(&nested_txt).unwrap(),
         NESTED_TXT,
@@ -300,7 +336,11 @@ fn detect_tar_gz_fixture_extensionless_by_magic() {
     // The extensionless copy looks like a plain gzip stream (magic = 1F 8B);
     // without the .tar.gz extension, rcomp cannot refine to the layered format.
     let work = TempDir::new().unwrap();
-    let stripped = copy_to(&fixture("sample.tar.gz"), work.path(), "sample_tar_gz_noext");
+    let stripped = copy_to(
+        &fixture("sample.tar.gz"),
+        work.path(),
+        "sample_tar_gz_noext",
+    );
     let fmt = detect(&stripped).expect("detect extensionless tar.gz");
     // Magic bytes identify gzip; extension refinement to tar.gz is not possible
     // without the extension, so the result is codec-only gzip.
@@ -330,15 +370,26 @@ fn list_tar_gz_fixture_returns_expected_entries() {
 #[test]
 fn extract_tar_gz_fixture_produces_correct_tree() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.tar.gz"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.tar.gz");
+    extract(
+        &fixture("sample.tar.gz"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.tar.gz");
 
     let sample_txt = dest.path().join("sample_dir/sample.txt");
-    assert!(sample_txt.exists(), "sample_dir/sample.txt should exist after tar.gz extract");
+    assert!(
+        sample_txt.exists(),
+        "sample_dir/sample.txt should exist after tar.gz extract"
+    );
     assert_eq!(std::fs::read(&sample_txt).unwrap(), SAMPLE_TXT);
 
     let nested_txt = dest.path().join("sample_dir/sub/nested.txt");
-    assert!(nested_txt.exists(), "sample_dir/sub/nested.txt should exist after tar.gz extract");
+    assert!(
+        nested_txt.exists(),
+        "sample_dir/sub/nested.txt should exist after tar.gz extract"
+    );
     assert_eq!(std::fs::read(&nested_txt).unwrap(), NESTED_TXT);
 }
 
@@ -385,15 +436,26 @@ fn list_zip_fixture_returns_expected_entries() {
 #[test]
 fn extract_zip_fixture_produces_correct_tree() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.zip"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.zip");
+    extract(
+        &fixture("sample.zip"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.zip");
 
     let sample_txt = dest.path().join("sample_dir/sample.txt");
-    assert!(sample_txt.exists(), "sample_dir/sample.txt should exist after zip extract");
+    assert!(
+        sample_txt.exists(),
+        "sample_dir/sample.txt should exist after zip extract"
+    );
     assert_eq!(std::fs::read(&sample_txt).unwrap(), SAMPLE_TXT);
 
     let nested_txt = dest.path().join("sample_dir/sub/nested.txt");
-    assert!(nested_txt.exists(), "sample_dir/sub/nested.txt should exist after zip extract");
+    assert!(
+        nested_txt.exists(),
+        "sample_dir/sub/nested.txt should exist after zip extract"
+    );
     assert_eq!(std::fs::read(&nested_txt).unwrap(), NESTED_TXT);
 }
 
@@ -424,7 +486,11 @@ fn detect_7z_fixture_extensionless_by_magic() {
 #[test]
 fn list_7z_fixture_returns_expected_entry() {
     let entries = list(&fixture("sample.7z")).expect("list sample.7z");
-    assert_eq!(entries.len(), 1, "sample.7z should list exactly 1 entry; got {entries:?}");
+    assert_eq!(
+        entries.len(),
+        1,
+        "sample.7z should list exactly 1 entry; got {entries:?}"
+    );
     assert_eq!(
         entries[0].path,
         Path::new("file.txt"),
@@ -438,8 +504,13 @@ fn list_7z_fixture_returns_expected_entry() {
 #[test]
 fn extract_7z_fixture_to_known_content() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("sample.7z"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract sample.7z");
+    extract(
+        &fixture("sample.7z"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract sample.7z");
 
     let out = dest.path().join("file.txt");
     assert!(out.exists(), "file.txt should exist after 7z extraction");
@@ -472,8 +543,13 @@ fn detect_br_fixture_by_extension_only() {
 #[test]
 fn extract_br_fixture_to_known_prefix() {
     let dest = TempDir::new().unwrap();
-    extract(&fixture("ipsum.br"), dest.path(), &Default::default(), nop_progress)
-        .expect("extract ipsum.br");
+    extract(
+        &fixture("ipsum.br"),
+        dest.path(),
+        &Default::default(),
+        nop_progress,
+    )
+    .expect("extract ipsum.br");
 
     // Extension stripped: "ipsum.br" → "ipsum"
     let out = dest.path().join("ipsum");

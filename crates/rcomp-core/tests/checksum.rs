@@ -14,9 +14,7 @@
 
 use std::path::Path;
 
-use rcomp_core::{
-    CompressOptions, Error, ExtractOptions, compress, extract,
-};
+use rcomp_core::{CompressOptions, Error, ExtractOptions, compress, extract};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -44,10 +42,7 @@ fn sha256_of_file(path: &Path) -> String {
     let bytes = std::fs::read(path).expect("read file for sha256");
     let mut h = Sha256::new();
     h.update(&bytes);
-    h.finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Compute SHA-256 of raw bytes.
@@ -55,10 +50,7 @@ fn sha256_of_bytes(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(data);
-    h.finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +97,9 @@ fn artifact_digest_matches_sha256sum_zst() {
     let report = compress(src.path().join("data.bin").as_path(), &archive, &opts, nop)
         .expect("compress should succeed");
 
-    let hex = report.sha256.expect("sha256 should be Some when checksum=true");
+    let hex = report
+        .sha256
+        .expect("sha256 should be Some when checksum=true");
 
     // Cross-check with the system sha256sum tool.
     if let Some(sys_hex) = sha256sum_of(&archive) {
@@ -114,7 +108,10 @@ fn artifact_digest_matches_sha256sum_zst() {
 
     // Also verify by re-hashing with sha2.
     let recomputed = sha256_of_file(&archive);
-    assert_eq!(hex, recomputed, "artifact digest must match re-hash of file");
+    assert_eq!(
+        hex, recomputed,
+        "artifact digest must match re-hash of file"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -132,12 +129,14 @@ fn artifact_digest_matches_rehash_tar_gz_dir() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     let hex = report.sha256.expect("sha256 should be Some");
     let recomputed = sha256_of_file(&archive);
-    assert_eq!(hex, recomputed, "artifact digest must match re-hash of .tar.gz");
+    assert_eq!(
+        hex, recomputed,
+        "artifact digest must match re-hash of .tar.gz"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -155,12 +154,14 @@ fn artifact_digest_matches_rehash_zip_dir() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     let hex = report.sha256.expect("sha256 should be Some for zip");
     let recomputed = sha256_of_file(&archive);
-    assert_eq!(hex, recomputed, "artifact digest must match re-hash of .zip");
+    assert_eq!(
+        hex, recomputed,
+        "artifact digest must match re-hash of .zip"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +182,7 @@ fn content_digest_codec_only_equals_input_sha256() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(&input_path, &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(&input_path, &archive, &opts, nop).expect("compress should succeed");
 
     let content_hex = report
         .content_sha256
@@ -211,8 +211,7 @@ fn content_digest_tar_gz_equals_tar_stream_sha256() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     assert!(
         report.content_sha256.is_some(),
@@ -248,8 +247,7 @@ fn content_digest_none_for_zip() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     assert!(
         report.content_sha256.is_none(),
@@ -272,8 +270,7 @@ fn content_digest_none_for_sevenz() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     assert!(
         report.content_sha256.is_none(),
@@ -296,8 +293,7 @@ fn plain_tar_artifact_equals_content_digest() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &opts, nop).expect("compress should succeed");
 
     let artifact = report.sha256.expect("sha256 should be Some for plain tar");
     let content = report
@@ -311,7 +307,10 @@ fn plain_tar_artifact_equals_content_digest() {
 
     // Both must match the file on disk.
     let on_disk = sha256_of_file(&archive);
-    assert_eq!(artifact, on_disk, "artifact must match re-hash of .tar file");
+    assert_eq!(
+        artifact, on_disk,
+        "artifact must match re-hash of .tar file"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -356,11 +355,12 @@ fn roundtrip_verify_succeeds() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive, &comp_opts, nop)
-        .expect("compress should succeed");
+    let report = compress(src.path(), &archive, &comp_opts, nop).expect("compress should succeed");
 
     let artifact_hex = report.sha256.expect("sha256 should be Some");
-    let content_hex = report.content_sha256.expect("content_sha256 should be Some");
+    let content_hex = report
+        .content_sha256
+        .expect("content_sha256 should be Some");
 
     // Extract with both verify fields.
     let ext_opts = ExtractOptions {
@@ -395,11 +395,18 @@ fn roundtrip_verify_codec_only_succeeds() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path().join("data.bin").as_path(), &archive, &comp_opts, nop)
-        .expect("compress should succeed");
+    let report = compress(
+        src.path().join("data.bin").as_path(),
+        &archive,
+        &comp_opts,
+        nop,
+    )
+    .expect("compress should succeed");
 
     let artifact_hex = report.sha256.expect("sha256 should be Some");
-    let content_hex = report.content_sha256.expect("content_sha256 should be Some");
+    let content_hex = report
+        .content_sha256
+        .expect("content_sha256 should be Some");
 
     let ext_opts = ExtractOptions {
         verify_sha256: Some(artifact_hex),
@@ -443,8 +450,8 @@ fn artifact_mismatch_returns_error_and_dest_empty() {
         checksum: true,
         ..Default::default()
     };
-    let report = compress(src.path(), &archive2, &comp_opts, nop)
-        .expect("compress2 should succeed");
+    let report =
+        compress(src.path(), &archive2, &comp_opts, nop).expect("compress2 should succeed");
     let good_hex = report.sha256.expect("sha256 should be Some");
 
     // Now corrupt archive2 and try to verify with the good_hex.
@@ -462,7 +469,13 @@ fn artifact_mismatch_returns_error_and_dest_empty() {
         .expect_err("should fail with artifact mismatch");
 
     assert!(
-        matches!(err, Error::ChecksumMismatch { kind: "artifact", .. }),
+        matches!(
+            err,
+            Error::ChecksumMismatch {
+                kind: "artifact",
+                ..
+            }
+        ),
         "expected ChecksumMismatch{{kind:artifact}}, got {err:?}"
     );
 
@@ -499,7 +512,13 @@ fn content_mismatch_returns_error() {
         .expect_err("should fail with content mismatch");
 
     assert!(
-        matches!(err, Error::ChecksumMismatch { kind: "content", .. }),
+        matches!(
+            err,
+            Error::ChecksumMismatch {
+                kind: "content",
+                ..
+            }
+        ),
         "expected ChecksumMismatch{{kind:content}}, got {err:?}"
     );
 }

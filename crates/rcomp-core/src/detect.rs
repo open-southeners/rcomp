@@ -267,13 +267,8 @@ pub fn detect(path: &Path) -> Result<Format> {
             // Refinement: the extension's Format "agrees with" the magic result
             // when they share the same codec or the same container.
             let refines = (magic_fmt.codec.is_some() && magic_fmt.codec == ext_fmt.codec)
-                || (magic_fmt.container.is_some()
-                    && magic_fmt.container == ext_fmt.container);
-            if refines {
-                Ok(ext_fmt)
-            } else {
-                Ok(magic_fmt)
-            }
+                || (magic_fmt.container.is_some() && magic_fmt.container == ext_fmt.container);
+            if refines { Ok(ext_fmt) } else { Ok(magic_fmt) }
         }
         // Magic succeeded, no extension hint.
         (Some(magic_fmt), None) => Ok(magic_fmt),
@@ -525,10 +520,7 @@ mod tests {
     #[test]
     fn magic_gzip() {
         let header = [0x1F, 0x8B, 0x08, 0x00];
-        assert_eq!(
-            detect_from_bytes(&header),
-            Some(Format::codec(Codec::Gzip))
-        );
+        assert_eq!(detect_from_bytes(&header), Some(Format::codec(Codec::Gzip)));
     }
 
     #[test]
@@ -549,10 +541,7 @@ mod tests {
     #[test]
     fn magic_zstd() {
         let header = [0x28, 0xB5, 0x2F, 0xFD, 0x04, 0x00];
-        assert_eq!(
-            detect_from_bytes(&header),
-            Some(Format::codec(Codec::Zstd))
-        );
+        assert_eq!(detect_from_bytes(&header), Some(Format::codec(Codec::Zstd)));
     }
 
     #[test]
@@ -657,10 +646,7 @@ mod tests {
     #[test]
     fn magic_three_bytes_returns_none_for_most() {
         // 3 bytes: enough for bzip2 (BZh) but not xz (6 bytes).
-        assert_eq!(
-            detect_from_bytes(b"BZh"),
-            Some(Format::codec(Codec::Bzip2))
-        );
+        assert_eq!(detect_from_bytes(b"BZh"), Some(Format::codec(Codec::Bzip2)));
         // Random 3 bytes that don't match anything.
         assert_eq!(detect_from_bytes(&[0x00, 0x01, 0x02]), None);
     }

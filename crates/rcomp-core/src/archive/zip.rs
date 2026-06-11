@@ -28,11 +28,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use zip::{
-    CompressionMethod,
-    ZipArchive, ZipWriter,
-    write::SimpleFileOptions,
-};
+use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     Error, Level, Result,
@@ -179,9 +175,9 @@ fn collect_dir_entries_recursive(
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let abs = entry.path();
-        let rel = abs.strip_prefix(root).map_err(|_| {
-            io::Error::other("failed to strip root prefix")
-        })?;
+        let rel = abs
+            .strip_prefix(root)
+            .map_err(|_| io::Error::other("failed to strip root prefix"))?;
         entries.push((rel.to_path_buf(), abs));
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -271,8 +267,7 @@ fn file_options(meta: &fs::Metadata, clevel: i64) -> SimpleFileOptions {
 /// Build a [`SimpleFileOptions`] for a directory entry.
 fn dir_options(meta: &fs::Metadata) -> SimpleFileOptions {
     // Directories are always stored (no compression useful).
-    let opts = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     unix_perms(opts, meta)
 }
 
@@ -281,8 +276,7 @@ fn dir_options(meta: &fs::Metadata) -> SimpleFileOptions {
 /// `add_symlink` will OR in `S_IFLNK` on top of the permission bits.
 #[cfg_attr(not(unix), allow(dead_code))]
 fn symlink_options(meta: &fs::Metadata) -> SimpleFileOptions {
-    let opts = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     unix_perms(opts, meta)
 }
 
@@ -356,7 +350,9 @@ pub(crate) fn extract(
         // by_index again, so we collect the metadata in a first pass and the
         // body in a second.
         let (raw_name, is_dir, is_symlink, unix_mode, size) = {
-            let entry = zip.by_index(idx).map_err(|e| io::Error::other(e.to_string()))?;
+            let entry = zip
+                .by_index(idx)
+                .map_err(|e| io::Error::other(e.to_string()))?;
             let raw_name = entry.name().to_owned();
             let is_dir = entry.is_dir();
             let is_symlink = entry.is_symlink();
@@ -387,14 +383,18 @@ pub(crate) fn extract(
         } else if is_symlink {
             // Symlink entries store the target path as the file body.
             let target_bytes = {
-                let mut entry =
-                    zip.by_index(idx).map_err(|e| io::Error::other(e.to_string()))?;
+                let mut entry = zip
+                    .by_index(idx)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
                 let mut buf = Vec::with_capacity(size as usize);
                 entry.read_to_end(&mut buf)?;
                 buf
             };
             let target_str = std::str::from_utf8(&target_bytes).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "symlink target is not valid UTF-8")
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "symlink target is not valid UTF-8",
+                )
             })?;
             let link_target = Path::new(target_str);
 
@@ -425,8 +425,9 @@ pub(crate) fn extract(
                 return Err(Error::AlreadyExists { path: out_path });
             }
             {
-                let mut entry =
-                    zip.by_index(idx).map_err(|e| io::Error::other(e.to_string()))?;
+                let mut entry = zip
+                    .by_index(idx)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
                 let mut out_file = fs::File::create(&out_path)?;
                 copy_with_progress(&mut entry, &mut out_file, ctx)?;
             }
@@ -481,7 +482,9 @@ pub(crate) fn list(archive: &Path) -> Result<Vec<Entry>> {
     let mut entries = Vec::with_capacity(zip.len());
 
     for idx in 0..zip.len() {
-        let entry = zip.by_index(idx).map_err(|e| io::Error::other(e.to_string()))?;
+        let entry = zip
+            .by_index(idx)
+            .map_err(|e| io::Error::other(e.to_string()))?;
         let path = PathBuf::from(entry.name());
         let size = entry.size();
         let is_dir = entry.is_dir();
@@ -662,10 +665,11 @@ mod tests {
         let mut buf = std::io::Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut buf);
-            let options = SimpleFileOptions::default()
-                .compression_method(CompressionMethod::Stored);
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
             // start_file accepts any string — including `../evil.txt`.
-            zip.start_file(entry_name, options).expect("start_file failed");
+            zip.start_file(entry_name, options)
+                .expect("start_file failed");
             zip.write_all(data).expect("write failed");
             zip.finish().expect("finish failed");
         }
@@ -778,9 +782,9 @@ mod tests {
 
         assert!(paths.contains(Path::new("a.txt")), "expected a.txt in list");
         // The dir entry ends with '/' in zip, so check for prefix match.
-        let has_sub = paths.iter().any(|p| {
-            p == Path::new("sub") || p == Path::new("sub/") || p.starts_with("sub")
-        });
+        let has_sub = paths
+            .iter()
+            .any(|p| p == Path::new("sub") || p == Path::new("sub/") || p.starts_with("sub"));
         assert!(has_sub, "expected sub directory in list: {paths:?}");
         assert!(
             paths.contains(Path::new("sub/b.txt")),
@@ -834,10 +838,7 @@ mod tests {
             let dest = extract_zip(&zip_path);
 
             let extracted = std::fs::read(dest.path().join("data.txt")).unwrap();
-            assert_eq!(
-                extracted, content,
-                "roundtrip failed for level {level:?}"
-            );
+            assert_eq!(extracted, content, "roundtrip failed for level {level:?}");
         }
     }
 

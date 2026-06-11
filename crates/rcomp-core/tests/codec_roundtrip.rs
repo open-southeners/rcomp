@@ -175,8 +175,7 @@ fn finish_required_gzip() {
     // contain a partial (header-only or partially-flushed) gzip stream.
     {
         let w: Box<dyn Write + '_> = Box::new(&mut compressed);
-        let mut enc = new_encoder(Codec::Gzip, w, Level::Best)
-            .expect("new_encoder should succeed");
+        let mut enc = new_encoder(Codec::Gzip, w, Level::Best).expect("new_encoder should succeed");
         enc.write_all(&original).expect("write_all should succeed");
 
         // Forget the encoder — finish() is NOT called, no Drop either.

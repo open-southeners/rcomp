@@ -15,8 +15,8 @@ use std::{
 use anyhow::{Context, bail};
 use indicatif::HumanBytes;
 use rcomp_core::{
-    CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report,
-    compress, detect, extract, list, split_format_suffix,
+    CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report, compress,
+    detect, extract, list, split_format_suffix,
 };
 
 use crate::cli::{Cli, SubCommand};
@@ -69,15 +69,16 @@ pub fn run(cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     }
 
     // INPUT is required for compress/extract.
-    let input_str = cli.input.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("INPUT is required; run `rcomp --help` for usage")
-    })?;
+    let input_str = cli
+        .input
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("INPUT is required; run `rcomp --help` for usage"))?;
     let input = Path::new(input_str);
 
     // Pre-compute facts for the inference engine.
     let output_str = cli.output.as_deref();
-    let output_suffix: Option<(&str, Format)> = output_str
-        .and_then(|o| split_format_suffix(Path::new(o).file_name()?.to_str()?));
+    let output_suffix: Option<(&str, Format)> =
+        output_str.and_then(|o| split_format_suffix(Path::new(o).file_name()?.to_str()?));
 
     let input_is_readable_file = std::fs::File::open(input).is_ok();
     let input_detects_ok = detect(input).is_ok();
@@ -151,7 +152,8 @@ fn cmd_compress(
         });
 
         if let Some(fmt) = effective_format
-            && fmt.container.is_none() && fmt.codec.is_some()
+            && fmt.container.is_none()
+            && fmt.codec.is_some()
         {
             // Codec-only + directory input → silent-tar confirmation needed.
             confirm_silent_tar(output_str, cli.yes)?;
@@ -191,7 +193,11 @@ fn cmd_compress(
     }
 
     // Map InvalidGlob → UsageError (exit 2).
-    if let Err(CoreError::InvalidGlob { ref pattern, ref message }) = result {
+    if let Err(CoreError::InvalidGlob {
+        ref pattern,
+        ref message,
+    }) = result
+    {
         return Err(anyhow::Error::new(UsageError {
             message: format!("invalid glob pattern `{pattern}`: {message}"),
         }));
@@ -202,8 +208,13 @@ fn cmd_compress(
 
     // Write the sidecar when --checksum was requested.
     if let Some(ref artifact_hex) = report.sha256 {
-        write_sidecar(&sidecar_path, output, artifact_hex, report.content_sha256.as_deref())
-            .context("failed to write checksum sidecar")?;
+        write_sidecar(
+            &sidecar_path,
+            output,
+            artifact_hex,
+            report.content_sha256.as_deref(),
+        )
+        .context("failed to write checksum sidecar")?;
     }
 
     if !cli.quiet {
@@ -281,12 +292,7 @@ fn confirm_silent_tar(output: &str, yes: bool) -> anyhow::Result<()> {
 // Extract
 // ---------------------------------------------------------------------------
 
-fn cmd_extract(
-    input: &Path,
-    dest: &Path,
-    cli: &Cli,
-    cancel: CancelToken,
-) -> anyhow::Result<()> {
+fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     // Parse the sidecar BEFORE the wrap-decision list() call.
     //
     // A sidecar alongside the archive is a promise: if it exists but cannot be
@@ -363,11 +369,14 @@ fn cmd_extract(
     }
 
     // Map ChecksumMismatch → clear message, exit 1.
-    if let Err(CoreError::ChecksumMismatch { kind, ref expected, ref actual }) = result {
+    if let Err(CoreError::ChecksumMismatch {
+        kind,
+        ref expected,
+        ref actual,
+    }) = result
+    {
         drop(prog.guard);
-        eprintln!(
-            "error: checksum mismatch ({kind}): expected {expected}, got {actual}"
-        );
+        eprintln!("error: checksum mismatch ({kind}): expected {expected}, got {actual}");
         std::process::exit(1);
     }
 
@@ -412,8 +421,7 @@ fn cmd_ls(archive: &Path, quiet: bool) -> anyhow::Result<()> {
             } else {
                 entry.path.display().to_string()
             };
-            writeln!(out, "{:>12}  {path_str}", entry.size)
-                .context("failed to write ls output")?;
+            writeln!(out, "{:>12}  {path_str}", entry.size).context("failed to write ls output")?;
         }
     }
 
@@ -441,10 +449,7 @@ fn write_sidecar(
     artifact_hex: &str,
     content_hex: Option<&str>,
 ) -> anyhow::Result<()> {
-    let file_name = output
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let file_name = output.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     let mut text = String::new();
     if let Some(chex) = content_hex {
@@ -478,10 +483,7 @@ fn parse_sidecar(
     let raw = fs::read_to_string(sidecar_path)
         .with_context(|| format!("failed to read sidecar `{}`", sidecar_path.display()))?;
 
-    let input_name = input
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let input_name = input.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     let mut artifact_hex: Option<String> = None;
     let mut content_hex: Option<String> = None;
@@ -660,7 +662,8 @@ fn cmd_man() -> anyhow::Result<()> {
     let cmd = crate::cli::Cli::command();
     let man = clap_mangen::Man::new(cmd);
     let mut stdout = io::stdout();
-    man.render(&mut stdout).context("failed to render man page")?;
+    man.render(&mut stdout)
+        .context("failed to render man page")?;
     Ok(())
 }
 
@@ -671,11 +674,9 @@ fn cmd_man() -> anyhow::Result<()> {
 /// Map a [`CoreError`] to an `anyhow::Error` with contextual hints.
 fn map_core_error(e: CoreError, operation: &str) -> anyhow::Error {
     match e {
-        CoreError::AlreadyExists { ref path } => anyhow::anyhow!(
-            "{e}\nhint: use --force to overwrite `{}`",
-            path.display()
-        ),
+        CoreError::AlreadyExists { ref path } => {
+            anyhow::anyhow!("{e}\nhint: use --force to overwrite `{}`", path.display())
+        }
         other => anyhow::anyhow!("{other}").context(format!("{operation} failed")),
     }
 }
-

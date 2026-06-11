@@ -368,7 +368,10 @@ mod tests {
 
     #[test]
     fn from_str_gzip_canonical() {
-        assert_eq!("gzip".parse::<Format>().unwrap(), Format::codec(Codec::Gzip));
+        assert_eq!(
+            "gzip".parse::<Format>().unwrap(),
+            Format::codec(Codec::Gzip)
+        );
     }
 
     #[test]
@@ -378,12 +381,18 @@ mod tests {
 
     #[test]
     fn from_str_bzip2_canonical() {
-        assert_eq!("bzip2".parse::<Format>().unwrap(), Format::codec(Codec::Bzip2));
+        assert_eq!(
+            "bzip2".parse::<Format>().unwrap(),
+            Format::codec(Codec::Bzip2)
+        );
     }
 
     #[test]
     fn from_str_bz2_alias() {
-        assert_eq!("bz2".parse::<Format>().unwrap(), Format::codec(Codec::Bzip2));
+        assert_eq!(
+            "bz2".parse::<Format>().unwrap(),
+            Format::codec(Codec::Bzip2)
+        );
     }
 
     #[test]
@@ -393,7 +402,10 @@ mod tests {
 
     #[test]
     fn from_str_zstd_canonical() {
-        assert_eq!("zstd".parse::<Format>().unwrap(), Format::codec(Codec::Zstd));
+        assert_eq!(
+            "zstd".parse::<Format>().unwrap(),
+            Format::codec(Codec::Zstd)
+        );
     }
 
     #[test]
@@ -408,39 +420,60 @@ mod tests {
 
     #[test]
     fn from_str_brotli_canonical() {
-        assert_eq!("brotli".parse::<Format>().unwrap(), Format::codec(Codec::Brotli));
+        assert_eq!(
+            "brotli".parse::<Format>().unwrap(),
+            Format::codec(Codec::Brotli)
+        );
     }
 
     #[test]
     fn from_str_br_alias() {
-        assert_eq!("br".parse::<Format>().unwrap(), Format::codec(Codec::Brotli));
+        assert_eq!(
+            "br".parse::<Format>().unwrap(),
+            Format::codec(Codec::Brotli)
+        );
     }
 
     // --- FromStr — container canonical names and aliases ---
 
     #[test]
     fn from_str_tar() {
-        assert_eq!("tar".parse::<Format>().unwrap(), Format::container(Container::Tar));
+        assert_eq!(
+            "tar".parse::<Format>().unwrap(),
+            Format::container(Container::Tar)
+        );
     }
 
     #[test]
     fn from_str_zip() {
-        assert_eq!("zip".parse::<Format>().unwrap(), Format::container(Container::Zip));
+        assert_eq!(
+            "zip".parse::<Format>().unwrap(),
+            Format::container(Container::Zip)
+        );
     }
 
     #[test]
     fn from_str_7z_canonical() {
-        assert_eq!("7z".parse::<Format>().unwrap(), Format::container(Container::SevenZ));
+        assert_eq!(
+            "7z".parse::<Format>().unwrap(),
+            Format::container(Container::SevenZ)
+        );
     }
 
     #[test]
     fn from_str_sevenz_alias() {
-        assert_eq!("sevenz".parse::<Format>().unwrap(), Format::container(Container::SevenZ));
+        assert_eq!(
+            "sevenz".parse::<Format>().unwrap(),
+            Format::container(Container::SevenZ)
+        );
     }
 
     #[test]
     fn from_str_rar() {
-        assert_eq!("rar".parse::<Format>().unwrap(), Format::container(Container::Rar));
+        assert_eq!(
+            "rar".parse::<Format>().unwrap(),
+            Format::container(Container::Rar)
+        );
     }
 
     // --- FromStr — layered names via extension table ---
@@ -529,7 +562,10 @@ mod tests {
 
     #[test]
     fn from_str_case_insensitive_gzip_uppercase() {
-        assert_eq!("GZIP".parse::<Format>().unwrap(), Format::codec(Codec::Gzip));
+        assert_eq!(
+            "GZIP".parse::<Format>().unwrap(),
+            Format::codec(Codec::Gzip)
+        );
     }
 
     #[test]
@@ -568,9 +604,9 @@ mod tests {
         ];
         for fmt in formats {
             let displayed = fmt.to_string();
-            let parsed: Format = displayed.parse().unwrap_or_else(|e| {
-                panic!("roundtrip failed for {displayed:?}: {e}")
-            });
+            let parsed: Format = displayed
+                .parse()
+                .unwrap_or_else(|e| panic!("roundtrip failed for {displayed:?}: {e}"));
             assert_eq!(parsed, fmt, "roundtrip mismatch for {displayed:?}");
         }
     }
@@ -585,9 +621,9 @@ mod tests {
         ];
         for fmt in formats {
             let displayed = fmt.to_string();
-            let parsed: Format = displayed.parse().unwrap_or_else(|e| {
-                panic!("roundtrip failed for {displayed:?}: {e}")
-            });
+            let parsed: Format = displayed
+                .parse()
+                .unwrap_or_else(|e| panic!("roundtrip failed for {displayed:?}: {e}"));
             assert_eq!(parsed, fmt, "roundtrip mismatch for {displayed:?}");
         }
     }
@@ -604,9 +640,9 @@ mod tests {
         ];
         for fmt in formats {
             let displayed = fmt.to_string();
-            let parsed: Format = displayed.parse().unwrap_or_else(|e| {
-                panic!("roundtrip failed for {displayed:?}: {e}")
-            });
+            let parsed: Format = displayed
+                .parse()
+                .unwrap_or_else(|e| panic!("roundtrip failed for {displayed:?}: {e}"));
             assert_eq!(parsed, fmt, "roundtrip mismatch for {displayed:?}");
         }
     }

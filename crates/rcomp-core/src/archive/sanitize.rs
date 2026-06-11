@@ -117,11 +117,7 @@ pub(crate) fn sanitize_entry_path(dest: &Path, entry: &Path) -> Result<PathBuf> 
 ///
 /// Returns [`Error::PathTraversal`] if the target is absolute or resolves
 /// outside `dest`.
-pub(crate) fn sanitize_link_target(
-    dest: &Path,
-    link_path: &Path,
-    target: &Path,
-) -> Result<()> {
+pub(crate) fn sanitize_link_target(dest: &Path, link_path: &Path, target: &Path) -> Result<()> {
     // Step 1: absolute symlink targets are always rejected.
     if target.is_absolute() {
         return Err(Error::PathTraversal {
@@ -133,7 +129,8 @@ pub(crate) fn sanitize_link_target(
     let base = link_path.parent().unwrap_or(dest);
 
     // Collect the initial path as a sequence of components we can pop.
-    let mut resolved: Vec<&std::ffi::OsStr> = base.components()
+    let mut resolved: Vec<&std::ffi::OsStr> = base
+        .components()
         .filter_map(|c| match c {
             Component::Normal(s) => Some(s),
             _ => None,

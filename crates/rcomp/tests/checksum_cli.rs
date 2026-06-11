@@ -26,7 +26,10 @@ fn rcomp() -> Command {
 ///
 /// Used to gate tests that verify the sidecar with the real coreutils tool.
 fn sha256sum_available() -> bool {
-    StdCommand::new("sha256sum").arg("--version").output().is_ok()
+    StdCommand::new("sha256sum")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 /// Create a temporary directory with two known files.
@@ -67,7 +70,10 @@ fn checksum_writes_sidecar_and_summary_shows_digest() {
 
     // Sidecar must exist.
     let sidecar = tmp.path().join("data.txt.gz.sha256");
-    assert!(sidecar.exists(), "sidecar should be written next to the output");
+    assert!(
+        sidecar.exists(),
+        "sidecar should be written next to the output"
+    );
 
     // Stdout must contain a `sha256: <hex>` line (artifact digest).
     let text = String::from_utf8(stdout).unwrap();
@@ -209,7 +215,10 @@ fn sidecar_collision_with_force_overwrites() {
         .success();
 
     let sidecar = tmp.path().join("over.txt.gz.sha256");
-    assert!(sidecar.exists(), "sidecar must exist after --force overwrite");
+    assert!(
+        sidecar.exists(),
+        "sidecar must exist after --force overwrite"
+    );
 }
 
 // ---------------------------------------------------------------------------

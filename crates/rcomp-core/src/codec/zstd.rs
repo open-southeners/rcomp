@@ -70,8 +70,7 @@ pub(crate) fn encoder<'a>(
     w: Box<dyn Write + 'a>,
     level: Level,
 ) -> crate::Result<Box<dyn Encoder + 'a>> {
-    let mut enc = ZstdWriteEncoder::new(w, compression_level(level))
-        .map_err(crate::Error::Io)?;
+    let mut enc = ZstdWriteEncoder::new(w, compression_level(level)).map_err(crate::Error::Io)?;
 
     enc.multithread(workers()).map_err(crate::Error::Io)?;
     // Always include a content checksum so that the decoder can detect
@@ -79,8 +78,7 @@ pub(crate) fn encoder<'a>(
     enc.include_checksum(true).map_err(crate::Error::Io)?;
 
     if level == Level::Edge {
-        enc.long_distance_matching(true)
-            .map_err(crate::Error::Io)?;
+        enc.long_distance_matching(true).map_err(crate::Error::Io)?;
     }
 
     Ok(Box::new(ZstdEncoder(enc)))

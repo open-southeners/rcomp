@@ -33,15 +33,15 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod archive;
 pub mod codec;
 pub mod detect;
 pub mod error;
 pub mod format;
-pub mod level;
-pub mod progress;
-mod archive;
 pub(crate) mod hash;
+pub mod level;
 mod ops;
+pub mod progress;
 pub(crate) mod walk;
 
 pub use codec::{Encoder, new_decoder, new_encoder};

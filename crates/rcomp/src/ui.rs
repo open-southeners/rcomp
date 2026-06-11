@@ -122,8 +122,7 @@ pub fn build(quiet: bool) -> Progress {
                     );
                 } else {
                     bar.set_style(
-                        ProgressStyle::with_template("{spinner:.green} {msg:40} {bytes}")
-                            .unwrap(),
+                        ProgressStyle::with_template("{spinner:.green} {msg:40} {bytes}").unwrap(),
                     );
                 }
                 bar.set_draw_target(ProgressDrawTarget::stderr());

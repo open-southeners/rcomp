@@ -112,9 +112,7 @@ fn ctrl_c_cancels_compress_and_cleans_up() {
         .expect("kill -INT");
 
     // Wait for the child to finish (it should exit quickly after SIGINT).
-    let output_result = child
-        .wait_with_output()
-        .expect("wait_with_output");
+    let output_result = child.wait_with_output().expect("wait_with_output");
 
     // 1. Non-zero exit status.
     assert!(

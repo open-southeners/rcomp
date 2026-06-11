@@ -40,22 +40,13 @@ use std::{
 };
 
 use sevenz_rust2::{
-    ArchiveEntry, ArchiveReader, ArchiveWriter,
-    EncoderConfiguration,
-    Password,
+    ArchiveEntry, ArchiveReader, ArchiveWriter, EncoderConfiguration, Password,
     encoder_options::Lzma2Options,
 };
 
-use crate::{
-    Error, Level, Result,
-    progress::Entry,
-    walk::WalkEntry,
-};
+use crate::{Error, Level, Result, progress::Entry, walk::WalkEntry};
 
-use super::{
-    OpCtx,
-    sanitize::sanitize_entry_path,
-};
+use super::{OpCtx, sanitize::sanitize_entry_path};
 
 // ---------------------------------------------------------------------------
 // Level → LZMA2 preset integer
@@ -165,8 +156,7 @@ pub(crate) fn create(
     let lzma2_opts = Lzma2Options::from_level(preset);
     let encoder_cfg = EncoderConfiguration::from(lzma2_opts);
 
-    let mut writer = ArchiveWriter::create(out)
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    let mut writer = ArchiveWriter::create(out).map_err(|e| io::Error::other(e.to_string()))?;
     writer.set_content_methods(vec![encoder_cfg]);
 
     let mut count: u64 = 0;
@@ -206,7 +196,9 @@ pub(crate) fn create(
         count += 1;
     }
 
-    writer.finish().map_err(|e| io::Error::other(e.to_string()))?;
+    writer
+        .finish()
+        .map_err(|e| io::Error::other(e.to_string()))?;
     Ok(count)
 }
 
@@ -229,9 +221,9 @@ fn collect_dir_entries_recursive(
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let abs = entry.path();
-        let rel = abs.strip_prefix(root).map_err(|_| {
-            io::Error::other("failed to strip root prefix")
-        })?;
+        let rel = abs
+            .strip_prefix(root)
+            .map_err(|_| io::Error::other("failed to strip root prefix"))?;
         entries.push((rel.to_path_buf(), abs));
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -614,7 +606,8 @@ mod tests {
 
         let out_dir = TempDir::new().unwrap();
         let archive_path = out_dir.path().join("out.7z");
-        let n = create(&src_file, &archive_path, Level::Best, &mut ctx, None).expect("create failed");
+        let n =
+            create(&src_file, &archive_path, Level::Best, &mut ctx, None).expect("create failed");
         assert_eq!(n, 1, "single file should yield 1 entry");
 
         let dest = TempDir::new().unwrap();
@@ -646,10 +639,7 @@ mod tests {
             let dest = extract_7z(&archive_path);
 
             let extracted = std::fs::read(dest.path().join("data.txt")).unwrap();
-            assert_eq!(
-                extracted, content,
-                "roundtrip failed for level {level:?}"
-            );
+            assert_eq!(extracted, content, "roundtrip failed for level {level:?}");
         }
     }
 
@@ -787,9 +777,9 @@ mod tests {
             "expected a.txt in list; got {:?}",
             paths
         );
-        let has_sub = paths.iter().any(|p| {
-            p == Path::new("sub") || p == Path::new("sub/") || p.starts_with("sub")
-        });
+        let has_sub = paths
+            .iter()
+            .any(|p| p == Path::new("sub") || p == Path::new("sub/") || p.starts_with("sub"));
         assert!(has_sub, "expected sub directory in list: {paths:?}");
         assert!(
             paths.contains(Path::new("sub/b.txt")),

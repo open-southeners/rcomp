@@ -87,7 +87,8 @@ pub fn infer_mode(facts: &InferFacts<'_>) -> Result<Mode, AmbiguityError> {
                     "--compress requires either a recognized OUTPUT extension ",
                     "or --algo to specify the target format. ",
                     "Example: rcomp -c INPUT output.tar.gz  OR  rcomp -c -a bzip2 INPUT OUTPUT"
-                ).to_owned(),
+                )
+                .to_owned(),
             });
         }
         return Ok(Mode::Compress);
@@ -133,9 +134,9 @@ pub fn infer_mode(facts: &InferFacts<'_>) -> Result<Mode, AmbiguityError> {
     };
 
     let output_clause = match facts.output {
-        Some(out) => format!(
-            "OUTPUT `{out}` has no recognized archive extension (cannot auto-compress)"
-        ),
+        Some(out) => {
+            format!("OUTPUT `{out}` has no recognized archive extension (cannot auto-compress)")
+        }
         None => "no OUTPUT was given".to_owned(),
     };
 

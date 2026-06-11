@@ -42,7 +42,10 @@ use std::{
     fs,
     io::{self, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Instant,
 };
 
@@ -50,12 +53,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     Codec, Container, Error, Format, Level, Result,
-    archive::{
-        OpCtx,
-        sevenz,
-        tar,
-        zip,
-    },
+    archive::{OpCtx, sevenz, tar, zip},
     codec::{Encoder, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
@@ -221,10 +219,7 @@ pub fn compress(
     let mut format = if let Some(f) = opts.format {
         f
     } else {
-        let name = output
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let name = output.file_name().and_then(|s| s.to_str()).unwrap_or("");
         detect_from_extension(name).ok_or_else(|| Error::UnknownFormat {
             path: output.to_path_buf(),
         })?
@@ -232,7 +227,10 @@ pub fn compress(
 
     // --- Silent-tar rule ---
     // Codec-only format + directory input → treat as tar-inside-codec.
-    if format.container.is_none() && input_meta.is_dir() && let Some(codec) = format.codec {
+    if format.container.is_none()
+        && input_meta.is_dir()
+        && let Some(codec) = format.codec
+    {
         format = Format::layered(Container::Tar, codec);
     }
 
@@ -640,12 +638,14 @@ pub fn extract(
     if opts.verify_content_sha256.is_some() {
         let unsupported = matches!(
             (format.container, format.codec),
-            (Some(Container::Zip), None)
-                | (Some(Container::SevenZ), None)
+            (Some(Container::Zip), None) | (Some(Container::SevenZ), None)
         );
         #[cfg(feature = "rar")]
         let unsupported = unsupported
-            || matches!((format.container, format.codec), (Some(Container::Rar), None));
+            || matches!(
+                (format.container, format.codec),
+                (Some(Container::Rar), None)
+            );
         if unsupported {
             return Err(Error::UnsupportedOperation {
                 format: format.to_string(),
@@ -871,15 +871,9 @@ fn do_extract(
                     // remaining hashing decoder.  The Cursor replay bytes skip
                     // the hasher — correct, they were already counted.
                     let prefix = Cursor::new(sniff_bytes);
-                    let chained: Box<dyn Read + '_> =
-                        Box::new(prefix.chain(hashing_decoder));
-                    let (entries, mut remainder) = tar::extract(
-                        chained,
-                        dest,
-                        overwrite,
-                        ctx,
-                        Some(Arc::clone(&counter)),
-                    )?;
+                    let chained: Box<dyn Read + '_> = Box::new(prefix.chain(hashing_decoder));
+                    let (entries, mut remainder) =
+                        tar::extract(chained, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
 
                     // Drain remaining bytes so the HashingReader sees the full
                     // decompressed stream (including trailing end-of-archive blocks
@@ -953,13 +947,8 @@ fn do_extract(
                 if is_tar {
                     let prefix = Cursor::new(sniff_bytes);
                     let chained: Box<dyn Read + '_> = Box::new(prefix.chain(decoder));
-                    let (entries, _remainder) = tar::extract(
-                        chained,
-                        dest,
-                        overwrite,
-                        ctx,
-                        Some(Arc::clone(&counter)),
-                    )?;
+                    let (entries, _remainder) =
+                        tar::extract(chained, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
                     (ctx.on_progress)(&ctx.progress);
@@ -1183,7 +1172,9 @@ fn copy_decoder_synced(
 /// 3. Fall back to `<input_file_name>.out`.
 fn output_name_for_codec_file(input: &Path, codec: Codec) -> Result<PathBuf> {
     // 1. Gzip embedded filename (if applicable).
-    if codec == Codec::Gzip && let Ok(file) = fs::File::open(input) {
+    if codec == Codec::Gzip
+        && let Ok(file) = fs::File::open(input)
+    {
         let gz = flate2::read::GzDecoder::new(BufReader::new(file));
         if let Some(header) = gz.header()
             && let Some(raw) = header.filename()
@@ -1203,7 +1194,9 @@ fn output_name_for_codec_file(input: &Path, codec: Codec) -> Result<PathBuf> {
     // 2. Strip the codec extension from the input file stem.
     if let Some(file_name) = input.file_name().and_then(|s| s.to_str()) {
         let ext = format!(".{}", codec.short_ext());
-        if let Some(stem) = file_name.strip_suffix(&ext) && !stem.is_empty() {
+        if let Some(stem) = file_name.strip_suffix(&ext)
+            && !stem.is_empty()
+        {
             return Ok(PathBuf::from(stem));
         }
     }

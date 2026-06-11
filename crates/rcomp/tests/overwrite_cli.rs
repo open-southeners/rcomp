@@ -57,7 +57,10 @@ fn compress_refused_overwrite_exits_1_with_force_hint() {
         .assert()
         .success();
 
-    assert!(out.exists(), "output archive must exist after first compress");
+    assert!(
+        out.exists(),
+        "output archive must exist after first compress"
+    );
 
     // Second compress without --force: must fail with exit code 1 and hint.
     rcomp()
@@ -65,9 +68,7 @@ fn compress_refused_overwrite_exits_1_with_force_hint() {
         .assert()
         .failure()
         .code(1)
-        .stderr(
-            predicate::str::contains("--force").or(predicate::str::contains("force")),
-        );
+        .stderr(predicate::str::contains("--force").or(predicate::str::contains("force")));
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +139,10 @@ fn compress_force_produces_valid_archive() {
 
     // Name after extraction: strip ".gz" from "payload.txt.gz" → "payload.txt".
     let restored = dest.join("payload.txt");
-    assert!(restored.exists(), "payload.txt must be present after extract");
+    assert!(
+        restored.exists(),
+        "payload.txt must be present after extract"
+    );
     assert_eq!(
         fs::read(&restored).unwrap(),
         b"updated payload v2",
@@ -248,8 +252,14 @@ fn extract_wrap_folder_collision_with_force_succeeds() {
     // Files must be present and correct after the overwrite.
     let alpha = find_file_recursive(&dest, "alpha.txt");
     let beta = find_file_recursive(&dest, "beta.txt");
-    assert!(alpha.is_some(), "alpha.txt must be present after --force extract");
-    assert!(beta.is_some(), "beta.txt must be present after --force extract");
+    assert!(
+        alpha.is_some(),
+        "alpha.txt must be present after --force extract"
+    );
+    assert!(
+        beta.is_some(),
+        "beta.txt must be present after --force extract"
+    );
     assert_eq!(fs::read(alpha.unwrap()).unwrap(), b"alpha content");
     assert_eq!(fs::read(beta.unwrap()).unwrap(), b"beta content");
 }
@@ -287,9 +297,7 @@ fn extract_refused_overwrite_stderr_contains_force_hint() {
         .assert()
         .failure()
         .code(1)
-        .stderr(
-            predicate::str::contains("--force").or(predicate::str::contains("force")),
-        );
+        .stderr(predicate::str::contains("--force").or(predicate::str::contains("force")));
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +334,9 @@ fn extract_with_force_allows_reextract_single_file() {
         .code(0);
 
     let note = dest.join("note.txt");
-    assert!(note.exists(), "note.txt must exist after --force re-extract");
+    assert!(
+        note.exists(),
+        "note.txt must exist after --force re-extract"
+    );
     assert_eq!(fs::read(&note).unwrap(), b"note content");
 }

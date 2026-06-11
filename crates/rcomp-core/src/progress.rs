@@ -281,7 +281,10 @@ mod tests {
             "expected Cancelled, got {result:?}"
         );
         // No bytes must have been written.
-        assert!(dst.is_empty(), "no bytes should be written after a pre-cancel");
+        assert!(
+            dst.is_empty(),
+            "no bytes should be written after a pre-cancel"
+        );
         // No progress callbacks should have fired.
         assert_eq!(progress_calls, 0);
     }

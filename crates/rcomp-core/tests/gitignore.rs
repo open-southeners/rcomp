@@ -26,10 +26,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rcomp_core::{
-    CompressOptions, ExtractOptions,
-    compress, extract,
-};
+use rcomp_core::{CompressOptions, ExtractOptions, compress, extract};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -163,17 +160,44 @@ fn tar_gz_default_excludes_ignored_and_git() {
     let paths = entries_from_tar_gz(&archive);
 
     // Must be present.
-    assert!(paths.iter().any(|p| p == Path::new("a.txt")), "a.txt must be present; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new(".editorconfig")), ".editorconfig must be present; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new(".gitignore")), ".gitignore itself must be present; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new("sub/b.txt")), "sub/b.txt must be present; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new("sub/.gitignore")), "sub/.gitignore must be present; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p == Path::new("a.txt")),
+        "a.txt must be present; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new(".editorconfig")),
+        ".editorconfig must be present; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new(".gitignore")),
+        ".gitignore itself must be present; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new("sub/b.txt")),
+        "sub/b.txt must be present; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new("sub/.gitignore")),
+        "sub/.gitignore must be present; got {paths:?}"
+    );
 
     // Must be excluded.
-    assert!(!paths.iter().any(|p| p.starts_with(".git")), ".git must be excluded; got {paths:?}");
-    assert!(!paths.iter().any(|p| p.starts_with("target")), "target/ must be excluded by .gitignore; got {paths:?}");
-    assert!(!paths.iter().any(|p| p == Path::new("run.log")), "run.log must be excluded by .gitignore; got {paths:?}");
-    assert!(!paths.iter().any(|p| p == Path::new("sub/local-only.txt")), "sub/local-only.txt must be excluded by nested .gitignore; got {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be excluded; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with("target")),
+        "target/ must be excluded by .gitignore; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p == Path::new("run.log")),
+        "run.log must be excluded by .gitignore; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p == Path::new("sub/local-only.txt")),
+        "sub/local-only.txt must be excluded by nested .gitignore; got {paths:?}"
+    );
 }
 
 #[test]
@@ -183,8 +207,13 @@ fn tar_gz_default_report_entries_excluded_nonzero() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
-    let report = compress(src.path(), &archive, &make_compress_opts(true, vec![]), |_| {})
-        .expect("compress failed");
+    let report = compress(
+        src.path(),
+        &archive,
+        &make_compress_opts(true, vec![]),
+        |_| {},
+    )
+    .expect("compress failed");
 
     assert!(
         report.entries_excluded > 0,
@@ -209,10 +238,22 @@ fn tar_gz_all_includes_git_and_ignored() {
     let paths = entries_from_tar_gz(&archive);
 
     // With --all, everything is present.
-    assert!(paths.iter().any(|p| p.starts_with(".git")), ".git must be present with --all; got {paths:?}");
-    assert!(paths.iter().any(|p| p.starts_with("target")), "target/ must be present with --all; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new("run.log")), "run.log must be present with --all; got {paths:?}");
-    assert!(paths.iter().any(|p| p == Path::new("sub/local-only.txt")), "sub/local-only.txt must be present with --all; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be present with --all; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p.starts_with("target")),
+        "target/ must be present with --all; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new("run.log")),
+        "run.log must be present with --all; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p == Path::new("sub/local-only.txt")),
+        "sub/local-only.txt must be present with --all; got {paths:?}"
+    );
 }
 
 #[test]
@@ -222,8 +263,13 @@ fn tar_gz_all_entries_excluded_is_zero() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
-    let report = compress(src.path(), &archive, &make_compress_opts(false, vec![]), |_| {})
-        .expect("compress failed");
+    let report = compress(
+        src.path(),
+        &archive,
+        &make_compress_opts(false, vec![]),
+        |_| {},
+    )
+    .expect("compress failed");
 
     assert_eq!(
         report.entries_excluded, 0,
@@ -248,8 +294,14 @@ fn zip_default_excludes_ignored_and_git() {
 
     assert!(paths.iter().any(|p| p == Path::new("a.txt")));
     assert!(paths.iter().any(|p| p == Path::new(".editorconfig")));
-    assert!(!paths.iter().any(|p| p.starts_with(".git")), ".git must be excluded from zip; got {paths:?}");
-    assert!(!paths.iter().any(|p| p.starts_with("target")), "target/ must be excluded from zip; got {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be excluded from zip; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with("target")),
+        "target/ must be excluded from zip; got {paths:?}"
+    );
     assert!(!paths.iter().any(|p| p == Path::new("run.log")));
     assert!(!paths.iter().any(|p| p == Path::new("sub/local-only.txt")));
 }
@@ -265,7 +317,10 @@ fn zip_all_includes_git() {
 
     let paths = entries_from_zip(&archive);
 
-    assert!(paths.iter().any(|p| p.starts_with(".git")), ".git must be present in zip with --all; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be present in zip with --all; got {paths:?}"
+    );
     assert!(paths.iter().any(|p| p.starts_with("target")));
 }
 
@@ -286,7 +341,10 @@ fn sevenz_default_excludes_ignored_and_git() {
 
     assert!(paths.iter().any(|p| p == Path::new("a.txt")));
     assert!(paths.iter().any(|p| p == Path::new(".editorconfig")));
-    assert!(!paths.iter().any(|p| p.starts_with(".git")), ".git must be excluded from 7z; got {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be excluded from 7z; got {paths:?}"
+    );
     assert!(!paths.iter().any(|p| p.starts_with("target")));
     assert!(!paths.iter().any(|p| p == Path::new("run.log")));
 }
@@ -302,7 +360,10 @@ fn sevenz_all_includes_git() {
 
     let paths = entries_from_7z(&archive);
 
-    assert!(paths.iter().any(|p| p.starts_with(".git")), ".git must be present in 7z with --all; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be present in 7z with --all; got {paths:?}"
+    );
     assert!(paths.iter().any(|p| p.starts_with("target")));
 }
 
@@ -324,8 +385,14 @@ fn silent_tar_bz2_default_excludes_ignored_and_git() {
 
     assert!(paths.iter().any(|p| p == Path::new("a.txt")));
     assert!(paths.iter().any(|p| p == Path::new(".editorconfig")));
-    assert!(!paths.iter().any(|p| p.starts_with(".git")), ".git must be excluded from .bz2; got {paths:?}");
-    assert!(!paths.iter().any(|p| p.starts_with("target")), "target/ must be excluded from .bz2; got {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be excluded from .bz2; got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with("target")),
+        "target/ must be excluded from .bz2; got {paths:?}"
+    );
     assert!(!paths.iter().any(|p| p == Path::new("run.log")));
 }
 
@@ -340,7 +407,10 @@ fn silent_tar_bz2_all_includes_git() {
 
     let paths = entries_from_bz2(&archive);
 
-    assert!(paths.iter().any(|p| p.starts_with(".git")), ".git must be present in .bz2 with --all; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be present in .bz2 with --all; got {paths:?}"
+    );
     assert!(paths.iter().any(|p| p.starts_with("target")));
 }
 
@@ -362,8 +432,10 @@ fn nested_gitignore_honored() {
     // sub/b.txt is NOT ignored.
     assert!(paths.iter().any(|p| p == Path::new("sub/b.txt")));
     // sub/local-only.txt IS ignored by sub/.gitignore.
-    assert!(!paths.iter().any(|p| p == Path::new("sub/local-only.txt")),
-        "sub/local-only.txt must be excluded by nested .gitignore; got {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p == Path::new("sub/local-only.txt")),
+        "sub/local-only.txt must be excluded by nested .gitignore; got {paths:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -377,14 +449,21 @@ fn exclude_txt_with_gitignore_on() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
-    compress_to(src.path(), &archive, &make_compress_opts(true, vec!["*.txt".to_string()]));
+    compress_to(
+        src.path(),
+        &archive,
+        &make_compress_opts(true, vec!["*.txt".to_string()]),
+    );
 
     let paths = entries_from_tar_gz(&archive);
 
     // .txt files must be excluded.
-    assert!(!paths.iter().any(|p| {
-        p.extension().is_some_and(|ext| ext == "txt")
-    }), ".txt files must be excluded; got {paths:?}");
+    assert!(
+        !paths
+            .iter()
+            .any(|p| { p.extension().is_some_and(|ext| ext == "txt") }),
+        ".txt files must be excluded; got {paths:?}"
+    );
 
     // .editorconfig must still be present.
     assert!(paths.iter().any(|p| p == Path::new(".editorconfig")));
@@ -397,18 +476,31 @@ fn exclude_txt_with_gitignore_off() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
-    compress_to(src.path(), &archive, &make_compress_opts(false, vec!["*.txt".to_string()]));
+    compress_to(
+        src.path(),
+        &archive,
+        &make_compress_opts(false, vec!["*.txt".to_string()]),
+    );
 
     let paths = entries_from_tar_gz(&archive);
 
     // .txt files must be excluded even without gitignore.
-    assert!(!paths.iter().any(|p| {
-        p.extension().is_some_and(|ext| ext == "txt")
-    }), ".txt files must be excluded even with follow_gitignore=false; got {paths:?}");
+    assert!(
+        !paths
+            .iter()
+            .any(|p| { p.extension().is_some_and(|ext| ext == "txt") }),
+        ".txt files must be excluded even with follow_gitignore=false; got {paths:?}"
+    );
 
     // With --all, target/ and .git are present.
-    assert!(paths.iter().any(|p| p.starts_with("target")), "target/ must be present with --all; got {paths:?}");
-    assert!(paths.iter().any(|p| p.starts_with(".git")), ".git must be present with --all; got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with("target")),
+        "target/ must be present with --all; got {paths:?}"
+    );
+    assert!(
+        paths.iter().any(|p| p.starts_with(".git")),
+        ".git must be present with --all; got {paths:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -424,8 +516,13 @@ fn entries_excluded_zero_when_no_filtering() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
-    let report = compress(src.path(), &archive, &make_compress_opts(false, vec![]), |_| {})
-        .expect("compress failed");
+    let report = compress(
+        src.path(),
+        &archive,
+        &make_compress_opts(false, vec![]),
+        |_| {},
+    )
+    .expect("compress failed");
 
     assert_eq!(
         report.entries_excluded, 0,
@@ -467,8 +564,13 @@ fn entries_excluded_zero_for_file_input() {
 
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.gz");
-    let report = compress(&src_file, &archive, &make_compress_opts(true, vec![]), |_| {})
-        .expect("compress failed");
+    let report = compress(
+        &src_file,
+        &archive,
+        &make_compress_opts(true, vec![]),
+        |_| {},
+    )
+    .expect("compress failed");
 
     assert_eq!(
         report.entries_excluded, 0,
@@ -521,15 +623,10 @@ fn bytes_total_equals_included_sizes_after_filtering() {
     let mut last_bytes_total: Option<u64> = None;
     let mut last_bytes_done: u64 = 0;
 
-    let report = compress(
-        sp,
-        &archive,
-        &make_compress_opts(true, vec![]),
-        |p| {
-            last_bytes_total = p.bytes_total;
-            last_bytes_done = p.bytes_done;
-        },
-    )
+    let report = compress(sp, &archive, &make_compress_opts(true, vec![]), |p| {
+        last_bytes_total = p.bytes_total;
+        last_bytes_done = p.bytes_done;
+    })
     .expect("compress failed");
 
     // bytes_total in progress must equal the sum of included file sizes.
@@ -549,7 +646,10 @@ fn bytes_total_equals_included_sizes_after_filtering() {
     );
 
     // entries_excluded must be > 0.
-    assert!(report.entries_excluded > 0, "at least drop.log must be excluded");
+    assert!(
+        report.entries_excluded > 0,
+        "at least drop.log must be excluded"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -569,8 +669,8 @@ fn no_gitignore_no_exclude_behaves_exactly_as_before() {
     let out_dir = TempDir::new().unwrap();
     let archive = out_dir.path().join("out.tar.gz");
     // Default opts: follow_gitignore=true, but there's no .gitignore.
-    let report = compress(sp, &archive, &CompressOptions::default(), |_| {})
-        .expect("compress failed");
+    let report =
+        compress(sp, &archive, &CompressOptions::default(), |_| {}).expect("compress failed");
 
     // Every file must be present.
     let paths = entries_from_tar_gz(&archive);
