@@ -453,7 +453,7 @@ pub(crate) fn extract(
         use std::os::unix::fs::PermissionsExt;
         // Sort by descending component depth so deepest directories are
         // chmod'd first.  Use path length as a fast proxy for depth.
-        dir_modes.sort_by(|a, b| b.0.as_os_str().len().cmp(&a.0.as_os_str().len()));
+        dir_modes.sort_by_key(|b| std::cmp::Reverse(b.0.as_os_str().len()));
         for (dir_path, mode) in dir_modes {
             fs::set_permissions(&dir_path, fs::Permissions::from_mode(mode))?;
         }
