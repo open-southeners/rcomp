@@ -3,7 +3,7 @@
 # NOTE: This repo had no remote when this file was written; the first real
 # run happens once the remote is created and a GitHub release is published.
 #
-# Trigger: publishing a GitHub release (tag form: v<version>, e.g. v0.1.0).
+# Trigger: pushing a version tag (e.g. 0.1.0).
 # Steps:
 #   1. Guard: tag must match [workspace.package].version in Cargo.toml.
 #   2. Sanity: cargo publish --dry-run for rcomp-core (full verify is safe).
@@ -22,15 +22,55 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${REF_NAME}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract CHANGELOG notes
+        id: changelog
+        uses: release-flow/keep-a-changelog-action@v3
+        with:
+          command: query
+          version: ${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.release-notes }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+
   publish:
     name: Publish to crates.io
+    needs: release
     runs-on: ubuntu-latest
 
     steps:
@@ -48,10 +88,9 @@ jobs:
         # Use env: to inject the tag — never interpolate github context
         # expressions directly into run: commands (injection risk).
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
-          # Strip leading "v" (v0.1.0 → 0.1.0)
-          TAG_VERSION="${TAG#v}"
+          TAG_VERSION="${TAG}"
 
           CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "rcomp") | .version')
