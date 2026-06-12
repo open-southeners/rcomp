@@ -133,7 +133,7 @@ This repo follows a plan-driven flow. Planning docs live under `.claude/plans/`,
   what was asked.
 - `.claude/plans/PLAN_EXTRAS.md` — open questions, nice-to-haves, out-of-scope ideas. Items
   graduate into `PLAN.md` only when the user answers a question or accepts a suggestion.
-- `.claude/plans/milestone-*.md` — archived per-milestone plans.
+- `.claude/plans/milestone-*.md` — per-milestone plans.
 - `CURRENT_ISSUES.md` — gaps/bugs/spec-questions discovered during implementation (tracked).
 - `RELEASING.md` — the crates.io release runbook (`rcomp-core` publishes before `rcomp`;
   triggered by a tagged GitHub release).
