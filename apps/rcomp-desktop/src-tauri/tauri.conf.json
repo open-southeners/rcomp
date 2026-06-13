@@ -32,6 +32,11 @@
       "icons/icon.ico",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "category": "Utility",
+    "shortDescription": "Compress and extract archives",
+    "longDescription": "rcomp is a fast, cross-platform compression and archive utility that supports tar, zip, 7z, zstd, gzip, bzip2, xz, lz4, brotli, and more.",
+    "copyright": "Copyright © 2026 Ruben R",
+    "publisher": "Open Southeners"
   }
 }
