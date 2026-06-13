@@ -12,8 +12,8 @@
 use std::{fs, path::Path, str::FromStr, time::Instant};
 
 use rcomp_core::{
-    CompressOptions, Entry, ExtractOptions, Format, Level, Report, detect, format_sidecar, list,
-    parse_sidecar,
+    CompressOptions, Entry, Error as CoreError, ExtractOptions, Format, Level, Report, detect,
+    distinct_roots, format_sidecar, list, parse_sidecar, wrap_dir_name,
 };
 
 use crate::{
@@ -67,6 +67,11 @@ pub struct InspectResult {
     pub is_archive: bool,
     /// The detected format, if the file is a recognised archive.
     pub format: Option<Format>,
+    /// The canonical display name of the detected format (e.g. `"tar.gz"`,
+    /// `"zstd"`), or `None` when no format was detected.  This is the
+    /// `Display` representation of [`Format`] and is more suitable for UI
+    /// display than the serde-serialised `format` field.
+    pub format_name: Option<String>,
     /// File size in bytes, when the path is a regular file.
     pub size: Option<u64>,
 }
@@ -99,6 +104,7 @@ pub fn do_inspect(path: &Path) -> Result<InspectResult, IpcError> {
                 is_dir: false,
                 is_archive: false,
                 format: None,
+                format_name: None,
                 size: None,
             });
         }
@@ -111,6 +117,7 @@ pub fn do_inspect(path: &Path) -> Result<InspectResult, IpcError> {
             is_dir: true,
             is_archive: false,
             format: None,
+            format_name: None,
             size: None,
         });
     }
@@ -118,18 +125,23 @@ pub fn do_inspect(path: &Path) -> Result<InspectResult, IpcError> {
     let size = Some(meta.len());
 
     match detect(path) {
-        Ok(fmt) => Ok(InspectResult {
-            exists: true,
-            is_dir: false,
-            is_archive: true,
-            format: Some(fmt),
-            size,
-        }),
+        Ok(fmt) => {
+            let format_name = Some(fmt.to_string());
+            Ok(InspectResult {
+                exists: true,
+                is_dir: false,
+                is_archive: true,
+                format: Some(fmt),
+                format_name,
+                size,
+            })
+        }
         Err(_) => Ok(InspectResult {
             exists: true,
             is_dir: false,
             is_archive: false,
             format: None,
+            format_name: None,
             size,
         }),
     }
@@ -341,6 +353,49 @@ pub fn do_write_sidecar(
     fs::write(&sidecar_path, text).map_err(|e| IpcError::new("io", e.to_string()))
 }
 
+/// Wrap-folder decision returned by the `wrap_info` command.
+///
+/// The frontend uses this to decide whether to offer (or automatically apply)
+/// a wrapping directory on extraction, mirroring the CLI's wrap-folder logic
+/// in `run.rs`.
+#[derive(Debug, serde::Serialize)]
+pub struct WrapInfo {
+    /// Number of distinct top-level roots in the archive.  A value of `1`
+    /// means the archive already has a single root and no extra wrap folder is
+    /// needed; `>= 2` (or `0` for empty archives) means the contents would
+    /// scatter across the destination and a wrap folder is advisable.
+    ///
+    /// For formats where listing is not supported (bare codec streams, unknown
+    /// formats), this is always `1`.
+    pub roots: u32,
+    /// Suggested wrap directory name derived from the archive file name
+    /// (e.g. `"photos"` for `"photos.tar.gz"`).
+    pub wrap_dir: String,
+}
+
+/// Compute wrap-folder information for the archive at `input`.
+///
+/// This is the Tauri-free inner function so it can be called from tests
+/// without a webview.
+pub fn do_wrap_info(input: &Path) -> Result<WrapInfo, IpcError> {
+    let file_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("extracted");
+
+    let wrap_dir = wrap_dir_name(file_name).to_string_lossy().into_owned();
+
+    let roots = match list(input) {
+        Ok(entries) => distinct_roots(&entries) as u32,
+        // A bare codec stream or unknown format cannot be listed — treat as a
+        // single-root extraction (no wrap folder needed), mirroring run.rs.
+        Err(CoreError::UnsupportedOperation { .. }) | Err(CoreError::UnknownFormat { .. }) => 1,
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok(WrapInfo { roots, wrap_dir })
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -395,6 +450,16 @@ pub fn write_sidecar(
         &artifact_sha256,
         content_sha256.as_deref(),
     )
+}
+
+/// Return wrap-folder information for the archive at `path`.
+///
+/// The frontend uses the result to decide whether to place extracted contents
+/// inside a wrap directory (when `roots >= 2`) and what to name it
+/// (`wrap_dir`).
+#[tauri::command]
+pub fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
+    do_wrap_info(Path::new(&path))
 }
 
 /// Compress `input` to `output`, streaming [`ProgressEvent`]s via `channel`.
@@ -891,6 +956,86 @@ mod tests {
         assert!(!result.is_dir);
         assert!(result.is_archive);
         assert!(result.format.is_some());
+        assert_eq!(
+            result.format_name.as_deref(),
+            Some("zstd"),
+            "format_name should be the canonical display string"
+        );
         assert!(result.size.unwrap() > 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Test: do_wrap_info — multi-root archive reports roots >= 2
+    // ------------------------------------------------------------------
+    #[test]
+    fn wrap_info_multi_root_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Build a source directory with two top-level files so that a tar
+        // archive of the directory has two distinct top-level entries.
+        let src = dir.path().join("src");
+        fs::create_dir(&src).expect("create src dir");
+        write_small_file(&src, "alpha.txt", b"alpha content");
+        write_small_file(&src, "beta.txt", b"beta content");
+
+        let archive = dir.path().join("multi.tar");
+
+        let reg = JobRegistry::default();
+        let mut sink = |_: ProgressEvent| {};
+        let opts = CompressOpts {
+            format: Some("tar".into()),
+            level: None,
+            overwrite: false,
+            gitignore: false,
+            exclude: vec![],
+            checksum: false,
+        };
+        do_compress(&reg, "j-wrap-multi", &src, &archive, opts, &mut sink)
+            .expect("compress for wrap_info multi-root test");
+
+        let info = do_wrap_info(&archive).expect("wrap_info multi-root should not error");
+        assert!(
+            info.roots >= 2,
+            "expected >= 2 roots for two-file tar, got {}",
+            info.roots
+        );
+        assert_eq!(
+            info.wrap_dir, "multi",
+            "wrap_dir should be the stem of the archive file name"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Test: do_wrap_info — bare codec stream (non-listable) reports roots == 1
+    // ------------------------------------------------------------------
+    #[test]
+    fn wrap_info_bare_codec_reports_single_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = write_small_file(dir.path(), "data.txt", b"hello wrap_info");
+        let archive = dir.path().join("data.zst");
+
+        let reg = JobRegistry::default();
+        let mut sink = |_: ProgressEvent| {};
+        let opts = CompressOpts {
+            format: Some("zstd".into()),
+            level: None,
+            overwrite: false,
+            gitignore: false,
+            exclude: vec![],
+            checksum: false,
+        };
+        do_compress(&reg, "j-wrap-bare", &input, &archive, opts, &mut sink)
+            .expect("compress for wrap_info bare test");
+
+        let info = do_wrap_info(&archive).expect("wrap_info bare codec should not error");
+        assert_eq!(
+            info.roots, 1,
+            "bare codec stream should report roots == 1, got {}",
+            info.roots
+        );
+        assert_eq!(
+            info.wrap_dir, "data",
+            "wrap_dir should be the stem of the archive file name"
+        );
     }
 }
