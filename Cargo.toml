@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "apps/rcomp-desktop/src-tauri"]
+default-members = ["crates/rcomp-core", "crates/rcomp"]
 resolver = "3"
 
 [workspace.package]

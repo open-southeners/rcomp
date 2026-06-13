@@ -1,0 +1,19 @@
+[package]
+name = "rcomp-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rcomp desktop application"
+
+[lib]
+name = "rcomp_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rcomp-core = { path = "../../../crates/rcomp-core", features = ["serde"] }

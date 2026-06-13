@@ -2,3 +2,9 @@
 
 # Local planning docs (relocated out of the repo root)
 /.claude/plans/
+
+# Tauri desktop app build artifacts
+/apps/rcomp-desktop/node_modules
+/apps/rcomp-desktop/dist
+/apps/rcomp-desktop/src-tauri/target
+/apps/rcomp-desktop/src-tauri/gen
