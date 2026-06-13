@@ -42,6 +42,7 @@ pub(crate) mod hash;
 pub mod level;
 mod ops;
 pub mod progress;
+pub mod sidecar;
 pub(crate) mod walk;
 
 pub use codec::{Encoder, new_decoder, new_encoder};
@@ -51,3 +52,6 @@ pub use format::{Codec, Container, Format};
 pub use level::Level;
 pub use ops::{CompressOptions, ExtractOptions, compress, extract, list};
 pub use progress::{CancelToken, Entry, Progress, Report};
+pub use sidecar::{
+    SidecarError, distinct_roots, format_sidecar, is_sha256_hex, parse_sidecar, wrap_dir_name,
+};
