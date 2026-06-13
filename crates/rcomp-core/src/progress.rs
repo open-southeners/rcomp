@@ -16,6 +16,7 @@ use crate::archive::OpCtx;
 ///
 /// Delivered to the caller's `on_progress` callback after each chunk.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Progress {
     /// Number of bytes processed so far.
     pub bytes_done: u64,
@@ -55,6 +56,7 @@ impl CancelToken {
 
 /// Summary statistics reported when an operation completes successfully.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Report {
     /// Size of the input data, in bytes.
     pub input_bytes: u64,
@@ -108,6 +110,7 @@ impl Report {
 
 /// Metadata for a single entry inside an archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Entry {
     /// Path of the entry as stored in the archive.
     pub path: PathBuf,
@@ -315,5 +318,55 @@ mod tests {
         assert_eq!(n, data.len() as u64);
         assert_eq!(&dst, data);
         assert_eq!(bytes_reported, data.len() as u64);
+    }
+
+    // --- serde round-trip (only compiled when `--features serde`) ---
+
+    #[cfg(feature = "serde")]
+    mod serde_tests {
+        use std::time::Duration;
+
+        use crate::{
+            format::{Codec, Container, Format},
+            progress::Report,
+        };
+
+        #[test]
+        fn format_json_roundtrip() {
+            let cases = [
+                Format::codec(Codec::Gzip),
+                Format::container(Container::Tar),
+                Format::layered(Container::Tar, Codec::Zstd),
+            ];
+            for original in cases {
+                let json = serde_json::to_string(&original)
+                    .unwrap_or_else(|e| panic!("serialise failed for {original:?}: {e}"));
+                let decoded: Format = serde_json::from_str(&json)
+                    .unwrap_or_else(|e| panic!("deserialise failed for {json:?}: {e}"));
+                assert_eq!(decoded, original, "round-trip mismatch for {original:?}");
+            }
+        }
+
+        #[test]
+        fn report_json_roundtrip() {
+            let original = Report {
+                input_bytes: 1024,
+                output_bytes: 512,
+                entries: 3,
+                entries_excluded: 1,
+                duration: Duration::from_millis(42),
+                sha256: Some("abc123".to_string()),
+                content_sha256: None,
+            };
+            let json = serde_json::to_string(&original).expect("serialise Report");
+            let decoded: Report = serde_json::from_str(&json).expect("deserialise Report");
+            assert_eq!(decoded.input_bytes, original.input_bytes);
+            assert_eq!(decoded.output_bytes, original.output_bytes);
+            assert_eq!(decoded.entries, original.entries);
+            assert_eq!(decoded.entries_excluded, original.entries_excluded);
+            assert_eq!(decoded.duration, original.duration);
+            assert_eq!(decoded.sha256, original.sha256);
+            assert_eq!(decoded.content_sha256, original.content_sha256);
+        }
     }
 }

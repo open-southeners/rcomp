@@ -35,3 +35,4 @@ assert_cmd = "2"
 predicates = "3"
 ignore = "0.4"
 sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
