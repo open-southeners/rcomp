@@ -1,8 +1,15 @@
 :root {
-  font-family: system-ui, sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   color: #213547;
   background-color: #ffffff;
+  font-size: 15px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
@@ -11,8 +18,7 @@ body {
 }
 
 #app {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
