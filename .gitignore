@@ -8,3 +8,9 @@
 /apps/rcomp-desktop/dist
 /apps/rcomp-desktop/src-tauri/target
 /apps/rcomp-desktop/src-tauri/gen
+
+# Unused icon sets emitted by `tauri icon` (desktop-only; no mobile/appx targets)
+/apps/rcomp-desktop/src-tauri/icons/android
+/apps/rcomp-desktop/src-tauri/icons/ios
+/apps/rcomp-desktop/src-tauri/icons/Square*Logo.png
+/apps/rcomp-desktop/src-tauri/icons/StoreLogo.png
