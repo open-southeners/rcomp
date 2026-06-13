@@ -5,6 +5,32 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `.github/workflows/ci.yml` (`test` job) + `PLAN_TAURI.md` Acceptance
+  **What:** Adding `apps/rcomp-desktop/src-tauri` as a workspace member means
+  `cargo test --workspace --all-features` now pulls in the heavy Tauri GUI crate,
+  which needs webkit2gtk/gtk system libs — it would fail on the macOS/Windows
+  `test` matrix legs. The CI `test` job was therefore changed to
+  `cargo test --workspace --all-features --exclude rcomp-desktop --locked`, and a
+  separate `desktop` job (Linux, with apt webkit deps) builds the app. This means
+  the plan's literal acceptance command (`cargo test --workspace --all-features`,
+  no exclude) no longer holds as-written on all three OSes.
+  **Fix:** Treat `--exclude rcomp-desktop` (core/CLI suite) + the dedicated
+  `desktop` build job as the acceptance bar, and update the wording in
+  `PLAN_TAURI.md` Acceptance to match. If a true all-in-one `--workspace` test is
+  wanted later, every OS leg must install the Tauri system deps and pre-build the
+  frontend `dist/`. Note: the `clippy` job has no `--workspace`, so it follows
+  `default-members` (core+CLI only) and stays fast — if `--workspace` is ever
+  added there, it needs the same apt-dep step.
+
+- **Where:** `apps/rcomp-desktop/src-tauri/icons/` (`icon.icns`, `icon.ico`)
+  **What:** The M1 scaffold ships **placeholder** icons: solid dark-blue RGBA PNGs
+  (these satisfy `generate_context!`, which validates PNG-RGBA at compile time),
+  but `icon.icns` is an 8-byte magic+length stub and `icon.ico` is a synthetic
+  32×32 BMP-ICO. `cargo build` is fine, but `tauri bundle` on macOS will fail
+  embedding the stub ICNS.
+  **Fix:** Before M5 packaging, generate real multi-resolution icons from a source
+  PNG via `tauri icon` (or `iconutil`/`sips` on macOS) and replace the placeholders.
+
 - **Where:** `crates/rcomp-core/src/archive/sevenz.rs` (+ `rar.rs`)
   **What:** `sevenz-rust2` 0.21 exposes only `windows_attributes` — no unix
   mode bits, no symlink entries. So 7z archives don't preserve permissions
