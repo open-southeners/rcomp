@@ -16,7 +16,7 @@ use anyhow::{Context, bail};
 use indicatif::HumanBytes;
 use rcomp_core::{
     CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report, compress,
-    detect, extract, list, split_format_suffix,
+    detect, distinct_roots, extract, format_sidecar, list, split_format_suffix, wrap_dir_name,
 };
 
 use crate::cli::{Cli, SubCommand};
@@ -324,7 +324,8 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
                 let roots = distinct_roots(&entries);
                 if roots > 1 {
                     // Wrap: dest/<archive-stem>/
-                    let stem = archive_stem(input);
+                    let file_name = input.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    let stem = wrap_dir_name(file_name);
                     dest.join(stem)
                 } else {
                     dest.to_path_buf()
@@ -450,32 +451,23 @@ fn write_sidecar(
     content_hex: Option<&str>,
 ) -> anyhow::Result<()> {
     let file_name = output.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    let mut text = String::new();
-    if let Some(chex) = content_hex {
-        text.push_str(&format!("# content-sha256: {chex}\n"));
-    }
-    text.push_str(&format!("{artifact_hex}  {file_name}\n"));
-
+    let text = format_sidecar(artifact_hex, content_hex, file_name);
     fs::write(sidecar_path, text.as_bytes())?;
     Ok(())
 }
 
-/// Parse a `sha256sum`-style sidecar file and extract the digests for `input`.
+/// Read and parse a `sha256sum`-style sidecar file for `input`.
 ///
-/// Accepted line forms:
-/// - `# content-sha256: <hex>` — optional comment carrying the content digest.
-/// - `<hex>  <filename>` or `<hex> *<filename>` — artifact line; the filename
-///   field must match `input.file_name()`.  Unrelated artifact lines (other
-///   archive names) are tolerated and ignored.
+/// Reads the file at `sidecar_path` from disk, then delegates the pure parse
+/// to [`rcomp_core::parse_sidecar`].
 ///
 /// Returns `(verify_sha256, verify_content_sha256)`.
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1) when:
-/// - No line matches the input's file name (the sidecar is a promise).
-/// - Any artifact line has a malformed digest (not 64 lowercase hex chars).
+/// Returns an error (exit 1) when the sidecar file cannot be read, when no
+/// line matches the input's file name, or when a matched artifact line has a
+/// malformed digest.
 fn parse_sidecar(
     input: &Path,
     sidecar_path: &Path,
@@ -485,114 +477,8 @@ fn parse_sidecar(
 
     let input_name = input.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-    let mut artifact_hex: Option<String> = None;
-    let mut content_hex: Option<String> = None;
-
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        // Comment line: `# content-sha256: <hex>`
-        if let Some(rest) = line.strip_prefix("# content-sha256:") {
-            let hex = rest.trim().to_owned();
-            if !is_sha256_hex(&hex) {
-                bail!(
-                    "sidecar `{}` has a malformed content-sha256 comment: `{line}`",
-                    sidecar_path.display()
-                );
-            }
-            content_hex = Some(hex);
-            continue;
-        }
-
-        // Skip other comment lines.
-        if line.starts_with('#') {
-            continue;
-        }
-
-        // Artifact line: `<64-hex>  <filename>` or `<64-hex> *<filename>`.
-        //
-        // The standard sha256sum format uses two spaces for text mode and
-        // `<hex> *<name>` for binary mode.  We accept both.
-        let Some((hex_part, rest)) = line.split_once(' ') else {
-            // Not a recognised artifact line format — skip silently.
-            continue;
-        };
-        let name_part = if let Some(n) = rest.strip_prefix('*') {
-            n
-        } else {
-            rest.trim_start_matches(' ')
-        };
-
-        if name_part != input_name {
-            // Different file — a multi-archive sidecar; tolerate and skip.
-            continue;
-        }
-
-        // This line matches our input file.
-        if !is_sha256_hex(hex_part) {
-            bail!(
-                "sidecar `{}` contains a malformed SHA-256 digest for `{input_name}`: `{hex_part}`",
-                sidecar_path.display()
-            );
-        }
-        artifact_hex = Some(hex_part.to_owned());
-    }
-
-    match artifact_hex {
-        None => bail!(
-            "sidecar `{}` exists but contains no line for `{input_name}` \
-             — the sidecar is required when present",
-            sidecar_path.display()
-        ),
-        Some(hex) => Ok((Some(hex), content_hex)),
-    }
-}
-
-/// Return `true` if `s` is exactly 64 lowercase hexadecimal characters.
-fn is_sha256_hex(s: &str) -> bool {
-    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-/// Count the number of distinct first-path-components across all entries.
-///
-/// A single-file or single-root archive returns 1 (no wrap needed).
-/// Multiple root components indicate a "loose" archive that benefits from
-/// wrapping in a folder.
-fn distinct_roots(entries: &[rcomp_core::Entry]) -> usize {
-    use std::collections::HashSet;
-    let mut roots: HashSet<&str> = HashSet::new();
-    for entry in entries {
-        if let Some(first) = entry.path.components().next() {
-            use std::path::Component;
-            if let Component::Normal(name) = first
-                && let Some(s) = name.to_str()
-            {
-                roots.insert(s);
-            }
-        }
-    }
-    roots.len()
-}
-
-/// Return the archive stem to use as the wrap-folder name.
-///
-/// Uses [`split_format_suffix`] first; falls back to [`Path::file_stem`].
-fn archive_stem(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("extracted");
-
-    if let Some((stem, _fmt)) = split_format_suffix(file_name) {
-        PathBuf::from(stem)
-    } else {
-        path.file_stem()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("extracted"))
-    }
+    rcomp_core::parse_sidecar(&raw, input_name)
+        .map_err(|e| anyhow::anyhow!("sidecar `{}`: {e}", sidecar_path.display()))
 }
 
 // ---------------------------------------------------------------------------
