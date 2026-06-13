@@ -5,6 +5,33 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `apps/rcomp-desktop` (M4 UI flows — interactive behaviour)
+  **What:** M4 was implemented and verified only headlessly (`bun run build`,
+  `bunx svelte-check` = 0 errors, `cargo build -p rcomp-desktop`). The GUI was
+  never launched (no display in the build env), so the interactive flows are
+  **unproven at runtime**. Specifically unverified: (a) drag-drop delivers real
+  FS paths via `getCurrentWebview().onDragDropEvent` (`dragDropEnabled` defaults
+  true and is not disabled in `tauri.conf.json`, but the `event.payload.paths`
+  shape is version-sensitive); (b) the dialog plugin pickers/confirm fire
+  (`dialog:default` is granted, which covers open/save/ask/confirm); (c) the
+  `invoke` top-level arg casing (`jobId` → `job_id`, etc.) round-trips as
+  expected; (d) `write_sidecar`'s `content_sha256: null` serialises through the
+  JSON bridge; (e) the three policy dialogs (silent-tar, overwrite-retry, wrap)
+  and the checksum-mismatch alert actually display.
+  **Fix:** Run the plan's manual checklist on a real desktop: drop file / drop
+  folder / drop archive / pick via Browse / cancel mid-way / overwrite flow /
+  corrupted-sidecar flow / silent-tar confirm / wrap confirm. All `invoke`/Channel
+  usage is centralised in `src/lib/ipc.ts`, so any casing fix is one place.
+
+- **Where:** `apps/rcomp-desktop/src/lib/components/{CompressCard,ExtractCard}.svelte`
+  **What:** Two `svelte-check` warnings (`state_referenced_locally`): `$state`
+  initialised directly from an immutable prop (`defaultFormat(inspect.is_dir)`,
+  `deriveParent(inputPath)`). Intentional one-time defaults; the compiler can't
+  tell. Build is otherwise warning-clean (0 errors).
+  **Fix:** Cosmetic — silence by computing the default in the parent and passing
+  it as a prop, or wrap the initial read in Svelte's `untrack()`. No behaviour
+  change; do at leisure.
+
 - **Where:** `.github/workflows/ci.yml` (`test` job) + `PLAN_TAURI.md` Acceptance
   **What:** Adding `apps/rcomp-desktop/src-tauri` as a workspace member means
   `cargo test --workspace --all-features` now pulls in the heavy Tauri GUI crate,
