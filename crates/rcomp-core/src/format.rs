@@ -18,6 +18,7 @@ use std::{fmt, str::FromStr};
 ///
 /// Each variant corresponds to one byte-stream compression algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Codec {
     /// GNU zip / DEFLATE (`.gz`).
     Gzip,
@@ -77,6 +78,7 @@ impl Codec {
 /// own and is typically paired with a [`Codec`] (see [`Format::layered`]).
 /// Rar is supported for extraction only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Container {
     /// POSIX tape archive (`.tar`).
     Tar,
@@ -113,6 +115,7 @@ impl fmt::Display for Container {
 /// that matches the conventional file extension — for example `tar.gz`,
 /// `tar.bz2`, `tar.zst`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Format {
     /// The optional archive container layer.
     pub container: Option<Container>,

@@ -20,6 +20,7 @@
 /// (e.g. zstd level 22 + long-distance matching, xz level 9 + `--extreme`),
 /// without regard for hardware cost. `Fast` favours lowest latency over ratio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Level {
     /// Lowest latency; output ratio is traded away for speed.
     Fast,
