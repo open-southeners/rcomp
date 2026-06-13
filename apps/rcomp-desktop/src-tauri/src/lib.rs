@@ -14,6 +14,7 @@ use tauri::Manager as _;
 pub fn run() {
     tauri::Builder::default()
         .manage(job::JobRegistry::default())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::inspect,
             commands::list_entries,
@@ -22,6 +23,7 @@ pub fn run() {
             commands::cancel_job,
             commands::read_sidecar,
             commands::write_sidecar,
+            commands::wrap_info,
         ])
         // Cancel all in-flight jobs when the last window requests close.
         // `cancel_all` trips every registered CancelToken; worker threads call
