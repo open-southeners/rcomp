@@ -49,14 +49,19 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `default-members` (core+CLI only) and stays fast — if `--workspace` is ever
   added there, it needs the same apt-dep step.
 
-- **Where:** `apps/rcomp-desktop/src-tauri/icons/` (`icon.icns`, `icon.ico`)
-  **What:** The M1 scaffold ships **placeholder** icons: solid dark-blue RGBA PNGs
-  (these satisfy `generate_context!`, which validates PNG-RGBA at compile time),
-  but `icon.icns` is an 8-byte magic+length stub and `icon.ico` is a synthetic
-  32×32 BMP-ICO. `cargo build` is fine, but `tauri bundle` on macOS will fail
-  embedding the stub ICNS.
-  **Fix:** Before M5 packaging, generate real multi-resolution icons from a source
-  PNG via `tauri icon` (or `iconutil`/`sips` on macOS) and replace the placeholders.
+- **Where:** `.github/workflows/ci.yml` (`bundle` job) — AppImage/dmg/msi
+  **What:** The M5 `bundle` job builds installable packages on all three OSes via
+  `bunx tauri build` and uploads them as artifacts (gated to `push` events).
+  Locally only the **Linux `.deb`** path was proven end-to-end (a valid 5.9 MB
+  `rcomp_0.1.0_amd64.deb` with the `rcomp-desktop` binary + `.desktop` + icons).
+  AppImage could not be built here (`appimagetool`/`linuxdeploy` absent), and
+  dmg/msi need macOS/Windows — so those three bundle types are **verified by CI
+  only**. AppImage on `ubuntu-latest` (24.04) sometimes needs FUSE handling
+  (Tauri uses extract-and-run); `libfuse2` was deliberately NOT pinned (the
+  package is `libfuse2t64` on 24.04 — a wrong name would break apt).
+  **Fix:** Watch the first real `bundle` run; if AppImage fails, add the correct
+  FUSE package for the runner image or restrict Linux to `--bundles deb`. (Folds
+  into the existing "CI unverified by a real run" entry below.)
 
 - **Where:** `crates/rcomp-core/src/archive/sevenz.rs` (+ `rar.rs`)
   **What:** `sevenz-rust2` 0.21 exposes only `windows_attributes` — no unix
@@ -170,6 +175,13 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 
 ## Resolved
+
+- **Where:** `apps/rcomp-desktop/src-tauri/icons/` (placeholder icons)
+  **Outcome:** Resolved in M5 — a real 1024×1024 source PNG
+  (`icons/icon-source.png`) was run through `bunx tauri icon`, producing a valid
+  multi-size `icon.icns` (52 KB, `ic12`) and 6-icon `icon.ico` plus the PNG set.
+  The Linux `.deb` bundle embeds them correctly. The unused `android/`/`ios/`
+  sets `tauri icon` also emits are gitignored (desktop-only project).
 
 - **Where:** `crates/rcomp/src/main.rs` (no Ctrl-C handler)
   **Outcome:** Resolved in milestone 6 — a `ctrlc` handler trips a shared
