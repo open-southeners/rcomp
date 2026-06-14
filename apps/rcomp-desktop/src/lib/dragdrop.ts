@@ -12,15 +12,16 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 /**
  * Register a drag-drop listener on the current webview.
  *
- * @param cb  Called with the first path whenever a file or folder is dropped.
+ * @param cb  Called with all dropped paths whenever one or more files or
+ *            folders are dropped.  The array is always non-empty.
  * @returns   A Promise resolving to an `unlisten` function.
  */
-export function onFileDrop(cb: (path: string) => void): Promise<() => void> {
+export function onFileDrop(cb: (paths: string[]) => void): Promise<() => void> {
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       const paths = event.payload.paths;
       if (paths && paths.length > 0) {
-        cb(paths[0]);
+        cb(paths);
       }
     }
   });

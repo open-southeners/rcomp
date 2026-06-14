@@ -8,6 +8,7 @@
  */
 
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   InspectResult,
   Entry,
@@ -18,6 +19,23 @@ import type {
   CompressOpts,
   ExtractOpts,
 } from "./types";
+
+/**
+ * Drain the file paths the app was launched with (OS "open with" / argv) and
+ * mark the frontend ready for live `open-paths` events.  Call once on startup.
+ */
+export async function getLaunchPaths(): Promise<string[]> {
+  return invoke<string[]>("get_launch_paths");
+}
+
+/**
+ * Subscribe to file paths delivered by the OS while the app is running
+ * (macOS `Opened` events and Windows/Linux second-launch argv forwarding).
+ * Returns the unlisten function.
+ */
+export function onOpenPaths(cb: (paths: string[]) => void): Promise<UnlistenFn> {
+  return listen<string[]>("open-paths", (event) => cb(event.payload));
+}
 
 /** Inspect the filesystem entry at `path`. */
 export async function inspectPath(path: string): Promise<InspectResult> {
@@ -74,6 +92,26 @@ export async function compress(
   const channel = new Channel<ProgressEvent>();
   channel.onmessage = onProgress;
   return invoke<Report>("compress", { jobId, input, output, opts, channel });
+}
+
+/**
+ * Bundle multiple `inputs` into a single archive at `output`, streaming
+ * progress via `onProgress`.
+ *
+ * Each element of `inputs` becomes a top-level root in the resulting archive.
+ * A `Channel<ProgressEvent>` is created internally and wired to `onProgress`
+ * before calling invoke so the backend can start sending events immediately.
+ */
+export async function compressMany(
+  jobId: string,
+  inputs: string[],
+  output: string,
+  opts: CompressOpts,
+  onProgress: (e: ProgressEvent) => void,
+): Promise<Report> {
+  const channel = new Channel<ProgressEvent>();
+  channel.onmessage = onProgress;
+  return invoke<Report>("compress_many", { jobId, inputs, output, opts, channel });
 }
 
 /**

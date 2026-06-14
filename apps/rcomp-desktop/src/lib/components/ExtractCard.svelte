@@ -18,7 +18,9 @@
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string, verified: boolean) => void;
     onError: (err: IpcError) => void;
-    onViewContents: () => void;
+    /** Optional: when omitted, the "View contents" button is hidden (the
+     *  workspace already shows the archive's contents in the file list). */
+    onViewContents?: () => void;
   }
 
   let {
@@ -171,7 +173,9 @@
     <button class="btn-primary" onclick={handleExtract} disabled={busy}>
       {busy ? "Extracting…" : "Extract"}
     </button>
-    <button class="btn-secondary" onclick={onViewContents}>View contents</button>
+    {#if onViewContents}
+      <button class="btn-secondary" onclick={onViewContents}>View contents</button>
+    {/if}
   </div>
 </div>
 
@@ -188,7 +192,7 @@
   .card-title {
     margin: 0 0 0.25rem;
     font-size: 1.1rem;
-    color: #111;
+    color: var(--text);
   }
 
   .input-row {
@@ -200,21 +204,21 @@
   .field-label {
     font-size: 0.82rem;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   .field-value.path {
     font-size: 0.9rem;
-    color: #333;
+    color: var(--text);
     word-break: break-all;
   }
 
   .format-badge {
     align-self: flex-start;
-    background: #eff6ff;
-    color: #1d4ed8;
+    background: var(--accent-subtle-bg);
+    color: var(--accent-subtle-fg);
     border-radius: 4px;
     padding: 0.15rem 0.5rem;
     font-size: 0.8rem;
@@ -230,15 +234,15 @@
   .text-input {
     flex: 1;
     padding: 0.35rem 0.6rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
     font-size: 0.9rem;
-    color: #111;
-    background: #fff;
+    color: var(--text);
+    background: var(--surface);
   }
 
   .text-input:focus {
-    outline: 2px solid #0070f3;
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
 
@@ -246,8 +250,8 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
-    background: #fffbeb;
-    border: 1px solid #fde68a;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
     border-radius: 6px;
     padding: 0.6rem 0.8rem;
   }
@@ -255,7 +259,7 @@
   .wrap-note {
     margin: 0;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--text-muted);
     word-break: break-all;
   }
 
@@ -264,7 +268,7 @@
     align-items: center;
     gap: 0.45rem;
     font-size: 0.9rem;
-    color: #374151;
+    color: var(--text-secondary);
     cursor: pointer;
   }
 
@@ -274,8 +278,8 @@
 
   .sidecar-badge {
     align-self: flex-start;
-    background: #dcfce7;
-    color: #166534;
+    background: var(--success-bg);
+    color: var(--success-fg);
     border-radius: 4px;
     padding: 0.15rem 0.5rem;
     font-size: 0.8rem;
@@ -283,7 +287,7 @@
   }
 
   .inline-error {
-    color: #c00;
+    color: var(--danger);
     font-size: 0.88rem;
     margin: 0;
   }
@@ -299,15 +303,15 @@
     padding: 0.45rem 1.4rem;
     border: none;
     border-radius: 6px;
-    background: #0070f3;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-contrast);
     font-size: 0.95rem;
     cursor: pointer;
     transition: background 0.12s;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #0058c4;
+    background: var(--accent-hover);
   }
 
   .btn-primary:disabled {
@@ -317,16 +321,16 @@
 
   .btn-secondary {
     padding: 0.4rem 0.9rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
-    background: #fff;
-    color: #374151;
+    background: var(--surface);
+    color: var(--text-secondary);
     font-size: 0.9rem;
     cursor: pointer;
     transition: background 0.12s;
   }
 
   .btn-secondary:hover {
-    background: #f3f4f6;
+    background: var(--surface-hover);
   }
 </style>

@@ -1,25 +1,33 @@
 <script lang="ts">
+  /**
+   * ComposePanel — global compression parameters and the Compress action for
+   * the workspace's Compose mode.
+   *
+   * The staged items themselves are rendered by the always-visible `FileList`;
+   * this panel only owns the parameters (format/level/exclude/…), the output
+   * path, and the bundle-into-one-archive action via `compress_many`. Adding
+   * and removing items is delegated to the parent workspace.
+   */
   import { pickSavePath, confirmDialog } from "../dialogs";
-  import { compress, writeSidecar } from "../ipc";
-  import { FORMATS, LEVELS, defaultFormat, extensionFor } from "../formats";
-  import type { InspectResult, ProgressEvent, Report, IpcError } from "../types";
+  import { compressMany, writeSidecar } from "../ipc";
+  import { FORMATS, LEVELS, extensionFor } from "../formats";
+  import type { StagedItem, ProgressEvent, Report, IpcError } from "../types";
 
   interface Props {
-    inputPath: string;
-    inspect: InspectResult;
+    items: StagedItem[];
+    onAddFiles: () => void;
+    onAddFolder: () => void;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string) => void;
     onError: (err: IpcError) => void;
   }
 
-  let { inputPath, inspect, onRunning, onProgress, onDone, onError }: Props = $props();
+  let { items, onAddFiles, onAddFolder, onRunning, onProgress, onDone, onError }: Props = $props();
 
-  // Derive a default output path from the input name.
-  const inputBaseName = $derived(inputPath.replace(/\\/g, "/").split("/").pop() ?? "output");
-
-  let selectedFormat = $state(defaultFormat(inspect.is_dir));
+  let selectedFormat = $state("tar.zst");
   let outputPath = $state("");
+  let outputTouched = $state(false);
   let level = $state<"Fast" | "Best" | "Edge">("Best");
   let checksum = $state(false);
   let gitignore = $state(true);
@@ -28,18 +36,21 @@
   let inlineError = $state<string | null>(null);
   let busy = $state(false);
 
-  // Recompute outputPath default when format changes.
+  const selectedFormatEntry = $derived(FORMATS.find((f) => f.name === selectedFormat));
+
+  function dirName(p: string): string {
+    const normalized = p.replace(/\\/g, "/");
+    const idx = normalized.lastIndexOf("/");
+    return idx > 0 ? normalized.slice(0, idx) : "";
+  }
+
+  // Default the output path from the first staged item until the user edits it.
   $effect(() => {
     const ext = extensionFor(selectedFormat);
-    const stem = stripKnownExtensions(inputBaseName);
-    outputPath = `${stem}${ext}`;
+    const dir = items.length > 0 ? dirName(items[0].path) : "";
+    const def = dir ? `${dir}/archive${ext}` : `archive${ext}`;
+    if (!outputTouched) outputPath = def;
   });
-
-  function stripKnownExtensions(name: string): string {
-    return name
-      .replace(/\.(tar\.(gz|bz2|xz|zst|lz4|br))$/i, "")
-      .replace(/\.(zip|7z|tar|gz|bz2|xz|zst|lz4|br)$/i, "");
-  }
 
   function parseExclude(text: string): string[] {
     return text
@@ -48,26 +59,34 @@
       .filter((s) => s.length > 0);
   }
 
-  const selectedFormatEntry = $derived(FORMATS.find((f) => f.name === selectedFormat));
-
   async function chooseOutput(): Promise<void> {
-    const path = await pickSavePath(outputPath || inputBaseName);
-    if (path) outputPath = path;
+    const suggested = outputPath || `archive${extensionFor(selectedFormat)}`;
+    const path = await pickSavePath(suggested);
+    if (path) {
+      outputPath = path;
+      outputTouched = true;
+    }
   }
 
   async function handleCompress(): Promise<void> {
     inlineError = null;
 
+    if (items.length === 0) {
+      inlineError = "Add at least one file or folder to compress.";
+      return;
+    }
     if (!outputPath) {
       inlineError = "Please specify an output path.";
       return;
     }
 
-    // Silent-tar dialog: codec-only format + directory input.
-    if (inspect.is_dir && selectedFormatEntry?.codecOnly) {
+    // Silent-tar dialog: a codec-only format holds only one stream, so a
+    // multi-input or directory bundle is transparently tarred first.
+    const needsTar = items.length > 1 || items.some((it) => it.isDir);
+    if (selectedFormatEntry?.codecOnly && needsTar) {
       const ok = await confirmDialog(
-        `The folder will be archived as tar inside ${outputPath}. Other tools expect a .tar.* name. Continue?`,
-        "Folder will be tarred",
+        `These items will be archived as tar inside ${outputPath}. Other tools expect a .tar.* name. Continue?`,
+        "Items will be tarred",
       );
       if (!ok) return;
     }
@@ -90,9 +109,14 @@
     };
 
     try {
-      const report = await compress(jobId, inputPath, outputPath, opts, onProgress);
+      const report = await compressMany(
+        jobId,
+        items.map((it) => it.path),
+        outputPath,
+        opts,
+        onProgress,
+      );
 
-      // Write sidecar when checksum was requested and the report has a digest.
       if (checksum && report.sha256) {
         try {
           await writeSidecar(outputPath, report.sha256, report.content_sha256);
@@ -104,59 +128,58 @@
       onDone(report, outputPath);
     } catch (err: unknown) {
       const e = err as IpcError;
+      busy = false;
       if (e.kind === "already-exists") {
-        busy = false;
         const ok = await confirmDialog(`Overwrite ${outputPath}?`, "File already exists");
-        if (ok) {
-          await doCompress(true);
-        }
+        if (ok) await doCompress(true);
         return;
       }
-      if (e.kind === "cancelled") {
-        busy = false;
-        return;
-      }
+      if (e.kind === "cancelled") return;
       if (e.kind === "invalid-glob") {
-        busy = false;
         inlineError = `Invalid glob pattern: ${e.message}`;
         return;
       }
       if (e.kind === "unknown-format") {
-        busy = false;
         inlineError = `Unknown format: ${e.message}`;
         return;
       }
-      busy = false;
+      if (e.kind === "duplicate-input") {
+        const data = e.data as { name?: string } | undefined;
+        const name = data?.name ?? "an item";
+        inlineError = `Two items share the name "${name}". Rename or remove one before bundling.`;
+        return;
+      }
       onError(e);
     }
   }
 </script>
 
-<div class="compress-card">
+<div class="compose-panel">
   <h2 class="card-title">Compress</h2>
 
-  <div class="input-row">
-    <span class="field-label">Input</span>
-    <span class="field-value path">{inputPath}</span>
+  <div class="staged-actions">
+    <button class="btn-secondary" onclick={onAddFiles}>Add files…</button>
+    <button class="btn-secondary" onclick={onAddFolder}>Add folder…</button>
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="output-path">Output</label>
+    <label class="field-label" for="compose-output">Output</label>
     <div class="path-group">
       <input
-        id="output-path"
+        id="compose-output"
         class="text-input"
         type="text"
         bind:value={outputPath}
-        placeholder="output file path"
+        oninput={() => (outputTouched = true)}
+        placeholder="output archive path"
       />
       <button class="btn-secondary" onclick={chooseOutput}>Choose…</button>
     </div>
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="format-select">Format</label>
-    <select id="format-select" class="select-input" bind:value={selectedFormat}>
+    <label class="field-label" for="compose-format">Format</label>
+    <select id="compose-format" class="select-input" bind:value={selectedFormat}>
       {#each FORMATS as fmt (fmt.name)}
         <option value={fmt.name}>{fmt.label}</option>
       {/each}
@@ -164,8 +187,8 @@
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="level-select">Level</label>
-    <select id="level-select" class="select-input select-small" bind:value={level}>
+    <label class="field-label" for="compose-level">Level</label>
+    <select id="compose-level" class="select-input select-small" bind:value={level}>
       {#each LEVELS as l (l)}
         <option value={l}>{l}</option>
       {/each}
@@ -173,9 +196,9 @@
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="exclude-text">Exclude globs</label>
+    <label class="field-label" for="compose-exclude">Exclude globs</label>
     <textarea
-      id="exclude-text"
+      id="compose-exclude"
       class="text-input textarea"
       bind:value={excludeText}
       placeholder="*.log, .DS_Store (comma or newline)"
@@ -202,25 +225,27 @@
     <p class="inline-error">{inlineError}</p>
   {/if}
 
-  <button class="btn-primary" onclick={handleCompress} disabled={busy}>
+  <button class="btn-primary" onclick={handleCompress} disabled={busy || items.length === 0}>
     {busy ? "Compressing…" : "Compress"}
   </button>
 </div>
 
 <style>
-  .compress-card {
+  .compose-panel {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    min-width: 360px;
-    max-width: 500px;
-    padding: 1.5rem 2rem;
   }
 
   .card-title {
-    margin: 0 0 0.25rem;
+    margin: 0;
     font-size: 1.1rem;
-    color: #111;
+    color: var(--text);
+  }
+
+  .staged-actions {
+    display: flex;
+    gap: 0.4rem;
   }
 
   .input-row {
@@ -232,15 +257,9 @@
   .field-label {
     font-size: 0.82rem;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-  }
-
-  .field-value.path {
-    font-size: 0.9rem;
-    color: #333;
-    word-break: break-all;
   }
 
   .path-group {
@@ -250,16 +269,17 @@
 
   .text-input {
     flex: 1;
+    min-width: 0;
     padding: 0.35rem 0.6rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
     font-size: 0.9rem;
-    color: #111;
-    background: #fff;
+    color: var(--text);
+    background: var(--surface);
   }
 
   .text-input:focus {
-    outline: 2px solid #0070f3;
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
 
@@ -270,11 +290,11 @@
 
   .select-input {
     padding: 0.35rem 0.6rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
     font-size: 0.9rem;
-    background: #fff;
-    color: #111;
+    background: var(--surface);
+    color: var(--text);
   }
 
   .select-small {
@@ -292,7 +312,7 @@
     align-items: center;
     gap: 0.45rem;
     font-size: 0.9rem;
-    color: #374151;
+    color: var(--text-secondary);
     cursor: pointer;
   }
 
@@ -301,7 +321,7 @@
   }
 
   .inline-error {
-    color: #c00;
+    color: var(--danger);
     font-size: 0.88rem;
     margin: 0;
   }
@@ -311,15 +331,15 @@
     padding: 0.45rem 1.4rem;
     border: none;
     border-radius: 6px;
-    background: #0070f3;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-contrast);
     font-size: 0.95rem;
     cursor: pointer;
     transition: background 0.12s;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #0058c4;
+    background: var(--accent-hover);
   }
 
   .btn-primary:disabled {
@@ -329,10 +349,10 @@
 
   .btn-secondary {
     padding: 0.35rem 0.75rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
-    background: #fff;
-    color: #374151;
+    background: var(--surface);
+    color: var(--text-secondary);
     font-size: 0.9rem;
     cursor: pointer;
     white-space: nowrap;
@@ -340,6 +360,6 @@
   }
 
   .btn-secondary:hover {
-    background: #f3f4f6;
+    background: var(--surface-hover);
   }
 </style>
