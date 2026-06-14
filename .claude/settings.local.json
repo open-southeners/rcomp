@@ -9,7 +9,9 @@
       "WebFetch(domain:docs.rs)",
       "Bash(git checkout *)",
       "Bash(cargo search *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(cargo fmt *)",
+      "Bash(bunx svelte-check *)"
     ]
   }
 }
