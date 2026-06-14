@@ -114,15 +114,16 @@ impl<R: Read> Read for CountingReader<R> {
 
 /// Create a 7z archive from `src`, writing the output to `out`.
 ///
-/// - If `src` is a **directory**, its contents are archived recursively.  The
-///   directory itself is *not* included as an entry; its children are stored
-///   relative to `src`.  For example, archiving `photos/` yields entries
-///   `a.jpg` and `sub/b.jpg`, not `photos/a.jpg`.
-///   When `walk_entries` is `Some`, those pre-computed entries are used
-///   directly (filtering already applied) instead of doing a fresh recursive
-///   `read_dir` walk.
-/// - If `src` is a **file**, `walk_entries` is ignored and a single entry is
-///   written using the file's name.
+/// - When `walk_entries` is `Some`, it is the **authoritative** entry list and
+///   `src` is ignored: each [`WalkEntry::rel`] is stored verbatim as the entry
+///   name. This covers both a single pre-walked directory and a multi-input
+///   bundle (where each input's basename is preserved as a root). Filtering has
+///   already been applied by the walker.
+/// - When `walk_entries` is `None`, `src` drives traversal: a **directory** is
+///   archived recursively with its children stored relative to `src` (the
+///   directory itself is not an entry — archiving `photos/` yields `a.jpg`,
+///   `sub/b.jpg`, not `photos/a.jpg`); a **file** is written as a single entry
+///   using the file's name.
 /// - **Symlinks** are not preserved as symlink entries.  On all platforms the
 ///   symlink-target's data is stored as a regular file entry (dereferenced).
 /// - Entries within each directory are processed in sorted order for
@@ -160,19 +161,19 @@ pub(crate) fn create(
     writer.set_content_methods(vec![encoder_cfg]);
 
     let mut count: u64 = 0;
-    let meta = fs::symlink_metadata(src)?;
 
-    if meta.is_dir() {
-        if let Some(entries) = walk_entries {
-            // Use the pre-computed filtered entries (from the shared walker).
-            for we in entries {
-                let entry_name = rel_path_to_7z_name(&we.rel);
-                ctx.set_entry(&entry_name);
-                ctx.check_cancel()?;
-                push_entry(&mut writer, &we.abs, &entry_name, ctx)?;
-                count += 1;
-            }
-        } else {
+    if let Some(entries) = walk_entries {
+        // Authoritative pre-computed entry list (single dir or multi-input).
+        for we in entries {
+            let entry_name = rel_path_to_7z_name(&we.rel);
+            ctx.set_entry(&entry_name);
+            ctx.check_cancel()?;
+            push_entry(&mut writer, &we.abs, &entry_name, ctx)?;
+            count += 1;
+        }
+    } else {
+        let meta = fs::symlink_metadata(src)?;
+        if meta.is_dir() {
             let entries = collect_dir_entries(src)?;
             for (rel_path, abs_path) in entries {
                 let entry_name = rel_path_to_7z_name(&rel_path);
@@ -181,19 +182,19 @@ pub(crate) fn create(
                 push_entry(&mut writer, &abs_path, &entry_name, ctx)?;
                 count += 1;
             }
-        }
-    } else {
-        // Single file: use just the file name as the archive entry name.
-        let name = src.file_name().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "source path has no file name")
-        })?;
-        let rel_path = PathBuf::from(name);
-        let entry_name = rel_path_to_7z_name(&rel_path);
-        ctx.set_entry(&entry_name);
-        ctx.check_cancel()?;
+        } else {
+            // Single file: use just the file name as the archive entry name.
+            let name = src.file_name().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "source path has no file name")
+            })?;
+            let rel_path = PathBuf::from(name);
+            let entry_name = rel_path_to_7z_name(&rel_path);
+            ctx.set_entry(&entry_name);
+            ctx.check_cancel()?;
 
-        push_entry(&mut writer, src, &entry_name, ctx)?;
-        count += 1;
+            push_entry(&mut writer, src, &entry_name, ctx)?;
+            count += 1;
+        }
     }
 
     writer
