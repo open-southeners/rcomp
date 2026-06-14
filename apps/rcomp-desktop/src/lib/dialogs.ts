@@ -14,6 +14,16 @@ export async function pickFile(): Promise<string | null> {
   return result;
 }
 
+/**
+ * Open a multi-select file picker.  Returns an empty array when the user
+ * cancels.  Used to stage several files for a bundle-into-one-archive compose.
+ */
+export async function pickFiles(): Promise<string[]> {
+  const result = await open({ multiple: true, directory: false });
+  if (result == null) return [];
+  return Array.isArray(result) ? result : [result];
+}
+
 /** Open a folder picker.  Returns `null` when the user cancels. */
 export async function pickFolder(): Promise<string | null> {
   const result = await open({ multiple: false, directory: true });

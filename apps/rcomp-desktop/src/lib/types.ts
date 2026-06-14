@@ -39,6 +39,40 @@ export interface SidecarData {
   content_sha256: string | null;
 }
 
+/**
+ * A staged input in the workspace's Compose mode — one item that will become a
+ * top-level root in the bundled archive.
+ */
+export interface StagedItem {
+  /** Absolute path on disk. */
+  path: string;
+  /** Final path component, shown in the list. */
+  name: string;
+  /** Whether the path is a directory. */
+  isDir: boolean;
+  /** Whether the path is a recognised archive (still bundled as a plain file). */
+  isArchive: boolean;
+  /** File size in bytes, or `null` for directories. */
+  size: number | null;
+}
+
+/**
+ * A presentational row for the always-visible `FileList`, mapped from either
+ * archive entries (Open mode) or staged inputs (Compose mode).
+ */
+export interface FileRow {
+  /** Stable unique key (entry path or staged item path). */
+  key: string;
+  /** Display name. */
+  name: string;
+  /** Size in bytes, or `null` when not applicable (directories). */
+  size: number | null;
+  /** Whether the row represents a directory. */
+  isDir: boolean;
+  /** Whether the row can be removed (Compose staged items only). */
+  removable: boolean;
+}
+
 /** A Rust `Duration` as serialised by serde. */
 export interface RustDuration {
   secs: number;
