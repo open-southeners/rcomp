@@ -116,13 +116,13 @@
   }
 
   .summary-icon.compress {
-    background: #eff6ff;
-    color: #0070f3;
+    background: var(--accent-subtle-bg);
+    color: var(--accent);
   }
 
   .summary-icon.extract {
-    background: #f0fdf4;
-    color: #16a34a;
+    background: var(--success-icon-bg);
+    color: var(--success-icon-fg);
   }
 
   .summary-icon svg {
@@ -133,13 +133,13 @@
   .title {
     margin: 0;
     font-size: 1.2rem;
-    color: #111;
+    color: var(--text);
   }
 
   .dest {
     margin: 0;
     font-size: 0.85rem;
-    color: #666;
+    color: var(--text-muted);
     word-break: break-all;
     text-align: center;
     max-width: 100%;
@@ -150,10 +150,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    background: #f9fafb;
+    background: var(--surface-subtle);
     border-radius: 8px;
     padding: 0.75rem 1rem;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
   }
 
   .stat-row {
@@ -163,12 +163,12 @@
   }
 
   .stat-label {
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   .stat-value {
     font-weight: 500;
-    color: #111;
+    color: var(--text);
   }
 
   .digest-row {
@@ -180,15 +180,15 @@
     font-family: monospace;
     font-size: 0.75rem;
     word-break: break-all;
-    color: #444;
+    color: var(--text-secondary);
     font-weight: 400;
   }
 
   .verified-badge {
     margin-top: 0.25rem;
     align-self: flex-start;
-    background: #dcfce7;
-    color: #166534;
+    background: var(--success-bg);
+    color: var(--success-fg);
     border-radius: 4px;
     padding: 0.15rem 0.5rem;
     font-size: 0.8rem;
@@ -200,14 +200,14 @@
     padding: 0.5rem 1.4rem;
     border: none;
     border-radius: 6px;
-    background: #0070f3;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-contrast);
     font-size: 0.95rem;
     cursor: pointer;
     transition: background 0.12s;
   }
 
   .btn-primary:hover {
-    background: #0058c4;
+    background: var(--accent-hover);
   }
 </style>

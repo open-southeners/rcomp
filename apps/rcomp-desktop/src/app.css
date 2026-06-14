@@ -1,9 +1,97 @@
+/*
+ * Design tokens. Light values live on :root; the dark overrides follow the OS
+ * preference via `prefers-color-scheme`. Components reference only these
+ * variables so both themes stay in sync.
+ */
 :root {
   font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.5;
-  color: #213547;
-  background-color: #ffffff;
   font-size: 15px;
+
+  /* Let native controls (selects, checkboxes, scrollbars) follow the theme. */
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-subtle: #f9fafb;
+  --surface-hover: #f3f4f6;
+
+  /* Borders */
+  --border: #e5e7eb;
+  --border-input: #d1d5db;
+
+  /* Text */
+  --text: #111111;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --text-faint: #9ca3af;
+
+  /* Accent */
+  --accent: #0070f3;
+  --accent-hover: #0058c4;
+  --accent-contrast: #ffffff;
+  --accent-subtle-bg: #eff6ff;
+  --accent-subtle-fg: #1d4ed8;
+
+  /* Danger / error */
+  --danger: #cc0000;
+  --danger-banner-bg: #fef2f2;
+  --danger-banner-border: #fca5a5;
+  --danger-banner-fg: #991b1b;
+  --danger-soft-bg: #fee2e2;
+  --danger-strong: #b91c1c;
+
+  /* Success */
+  --success-bg: #dcfce7;
+  --success-fg: #166534;
+  --success-icon-bg: #f0fdf4;
+  --success-icon-fg: #16a34a;
+
+  /* Warning */
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1f;
+    --surface: #26262a;
+    --surface-subtle: #202023;
+    --surface-hover: #303036;
+
+    --border: #38383d;
+    --border-input: #4a4a52;
+
+    --text: #e9e9ec;
+    --text-secondary: #c6c7cc;
+    --text-muted: #9b9ca3;
+    --text-faint: #74757c;
+
+    --accent: #4a90ff;
+    --accent-hover: #6aa5ff;
+    --accent-contrast: #ffffff;
+    --accent-subtle-bg: #18324f;
+    --accent-subtle-fg: #8fbcff;
+
+    --danger: #f87171;
+    --danger-banner-bg: #3a1d1d;
+    --danger-banner-border: #7e3a3a;
+    --danger-banner-fg: #fca5a5;
+    --danger-soft-bg: #4a2222;
+    --danger-strong: #fca5a5;
+
+    --success-bg: #17341f;
+    --success-fg: #74e39b;
+    --success-icon-bg: #17341f;
+    --success-icon-fg: #4ade80;
+
+    --warn-bg: #38300f;
+    --warn-border: #6a5a1d;
+  }
 }
 
 *,
@@ -15,6 +103,8 @@
 body {
   margin: 0;
   min-height: 100vh;
+  color: var(--text);
+  background-color: var(--bg);
 }
 
 #app {

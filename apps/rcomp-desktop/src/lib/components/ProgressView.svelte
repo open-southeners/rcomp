@@ -80,13 +80,13 @@
   .title {
     margin: 0;
     font-size: 1.1rem;
-    color: #333;
+    color: var(--text);
   }
 
   .progress-bar-track {
     width: 100%;
     height: 10px;
-    background: #e5e7eb;
+    background: var(--border);
     border-radius: 5px;
     overflow: hidden;
     position: relative;
@@ -94,7 +94,7 @@
 
   .progress-bar-fill {
     height: 100%;
-    background: #0070f3;
+    background: var(--accent);
     border-radius: 5px;
     transition: width 0.1s;
   }
@@ -107,7 +107,7 @@
   .progress-bar-indeterminate {
     position: absolute;
     height: 100%;
-    background: #0070f3;
+    background: var(--accent);
     border-radius: 5px;
     animation: indeterminate 1.4s ease-in-out infinite;
   }
@@ -116,7 +116,7 @@
     display: flex;
     gap: 1rem;
     font-size: 0.9rem;
-    color: #555;
+    color: var(--text-muted);
   }
 
   .pct {
@@ -125,7 +125,7 @@
 
   .current-entry {
     font-size: 0.8rem;
-    color: #888;
+    color: var(--text-faint);
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -136,17 +136,17 @@
   .btn-cancel {
     margin-top: 0.5rem;
     padding: 0.4rem 1.1rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-input);
     border-radius: 6px;
-    background: #fff;
-    color: #444;
+    background: var(--surface);
+    color: var(--text-secondary);
     font-size: 0.9rem;
     cursor: pointer;
     transition: background 0.12s;
   }
 
   .btn-cancel:hover:not(:disabled) {
-    background: #f3f4f6;
+    background: var(--surface-hover);
   }
 
   .btn-cancel:disabled {
