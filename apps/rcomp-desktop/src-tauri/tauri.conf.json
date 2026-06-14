@@ -37,6 +37,31 @@
     "shortDescription": "Compress and extract archives",
     "longDescription": "rcomp is a fast, cross-platform compression and archive utility that supports tar, zip, 7z, zstd, gzip, bzip2, xz, lz4, brotli, and more.",
     "copyright": "Copyright © 2026 Ruben R",
-    "publisher": "Open Southeners"
+    "publisher": "Open Southeners",
+    "fileAssociations": [
+      {
+        "ext": [
+          "zip",
+          "7z",
+          "rar",
+          "tar",
+          "gz",
+          "tgz",
+          "bz2",
+          "tbz2",
+          "xz",
+          "txz",
+          "zst",
+          "tzst",
+          "lz4",
+          "br"
+        ],
+        "name": "Compressed archive",
+        "description": "Compressed archive",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "application/zip;application/x-7z-compressed;application/vnd.rar;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/zstd;application/x-lz4"
+      }
+    ]
   }
 }
