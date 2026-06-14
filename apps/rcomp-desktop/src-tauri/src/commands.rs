@@ -233,6 +233,74 @@ pub fn do_compress(
     }
 }
 
+/// Compress multiple `inputs` into a single archive at `output`.
+///
+/// The Tauri-free inner used by tests; mirrors [`do_compress`] in its
+/// registration, throttle, and final-event guarantee semantics but bundles all
+/// `inputs` into one archive via [`rcomp_core::compress_many`].
+pub fn do_compress_many(
+    reg: &JobRegistry,
+    job_id: &str,
+    inputs: &[std::path::PathBuf],
+    output: &Path,
+    opts: CompressOpts,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    let format = match opts.format.as_deref() {
+        Some(s) => match Format::from_str(s) {
+            Ok(f) => Some(f),
+            Err(_) => {
+                return Err(IpcError::new(
+                    "unknown-format",
+                    format!("unrecognised format string: {s}"),
+                ));
+            }
+        },
+        None => None,
+    };
+
+    let token = reg.register(job_id.to_string());
+
+    let core_opts = CompressOptions {
+        format,
+        level: opts.level.unwrap_or_default(),
+        overwrite: opts.overwrite,
+        cancel: token,
+        follow_gitignore: opts.gitignore,
+        exclude: opts.exclude,
+        checksum: opts.checksum,
+    };
+
+    let mut throttle = ProgressThrottle::default();
+    let mut last_progress: Option<rcomp_core::Progress> = None;
+
+    let result = rcomp_core::compress_many(inputs, output, &core_opts, |p| {
+        last_progress = Some(p.clone());
+        if throttle.should_forward(p, Instant::now()) {
+            sink(ProgressEvent::from(p));
+        }
+    });
+
+    reg.finish(job_id);
+
+    match result {
+        Ok(report) => {
+            let final_event = if let Some(ref p) = last_progress {
+                ProgressEvent::from(p)
+            } else {
+                ProgressEvent {
+                    bytes_done: report.input_bytes,
+                    bytes_total: Some(report.input_bytes),
+                    current_entry: None,
+                }
+            };
+            sink(final_event);
+            Ok(report)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Extract `input` into `dest` using the options in `opts`.
 ///
 /// Mirrors `do_compress` in its registration, throttle, and final-event
@@ -558,6 +626,91 @@ pub async fn compress(
     }
 }
 
+/// Compress multiple `inputs` into a single archive at `output`, streaming
+/// [`ProgressEvent`]s via `channel`.
+///
+/// Bundles every element of `inputs` into one archive (each input becomes a
+/// top-level root) via [`rcomp_core::compress_many`].  Uses the same
+/// State/spawn_blocking lifetime strategy as [`compress`].
+#[tauri::command]
+pub async fn compress_many(
+    job_id: String,
+    inputs: Vec<String>,
+    output: String,
+    opts: CompressOpts,
+    channel: tauri::ipc::Channel<ProgressEvent>,
+    registry: tauri::State<'_, JobRegistry>,
+) -> Result<Report, IpcError> {
+    let format = match opts.format.as_deref() {
+        Some(s) => match Format::from_str(s) {
+            Ok(f) => Some(f),
+            Err(_) => {
+                return Err(IpcError::new(
+                    "unknown-format",
+                    format!("unrecognised format string: {s}"),
+                ));
+            }
+        },
+        None => None,
+    };
+
+    let token = registry.register(job_id.clone());
+
+    let core_opts = CompressOptions {
+        format,
+        level: opts.level.unwrap_or_default(),
+        overwrite: opts.overwrite,
+        cancel: token,
+        follow_gitignore: opts.gitignore,
+        exclude: opts.exclude,
+        checksum: opts.checksum,
+    };
+
+    let channel_clone = channel.clone();
+    let input_paths: Vec<std::path::PathBuf> =
+        inputs.into_iter().map(std::path::PathBuf::from).collect();
+    let output_path = std::path::PathBuf::from(output);
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut throttle = ProgressThrottle::default();
+        let mut last_progress: Option<rcomp_core::Progress> = None;
+
+        let res = rcomp_core::compress_many(&input_paths, &output_path, &core_opts, |p| {
+            last_progress = Some(p.clone());
+            if throttle.should_forward(p, Instant::now()) {
+                let _ = channel_clone.send(ProgressEvent::from(p));
+            }
+        });
+
+        (res, last_progress)
+    })
+    .await;
+
+    registry.finish(&job_id);
+
+    let (core_result, last_progress) = match result {
+        Ok(pair) => pair,
+        Err(e) => return Err(IpcError::new("io", format!("task panicked: {e}"))),
+    };
+
+    match core_result {
+        Ok(report) => {
+            let final_event = if let Some(ref p) = last_progress {
+                ProgressEvent::from(p)
+            } else {
+                ProgressEvent {
+                    bytes_done: report.input_bytes,
+                    bytes_total: Some(report.input_bytes),
+                    current_entry: None,
+                }
+            };
+            let _ = channel.send(final_event);
+            Ok(report)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Extract `input` into `dest`, streaming [`ProgressEvent`]s via `channel`.
 ///
 /// Uses the same State/spawn_blocking lifetime strategy as [`compress`].
@@ -654,6 +807,65 @@ mod tests {
         let mut f = fs::File::create(&p).expect("create test file");
         f.write_all(content).expect("write test file");
         p
+    }
+
+    // ------------------------------------------------------------------
+    // Test: do_compress_many bundles multiple inputs into one archive
+    // ------------------------------------------------------------------
+    #[test]
+    fn compress_many_bundles_inputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_small_file(dir.path(), "a.txt", b"alpha");
+        let b = write_small_file(dir.path(), "b.txt", b"beta");
+        let output = dir.path().join("bundle.zip");
+
+        let reg = JobRegistry::default();
+        let mut events: Vec<ProgressEvent> = Vec::new();
+        let mut sink = |e| events.push(e);
+
+        let opts = CompressOpts {
+            format: Some("zip".into()),
+            level: None,
+            overwrite: false,
+            gitignore: false,
+            exclude: vec![],
+            checksum: false,
+        };
+        let report = do_compress_many(&reg, "j-many", &[a, b], &output, opts, &mut sink)
+            .expect("compress_many should succeed");
+
+        assert!(output.is_file(), "bundle archive should exist");
+        assert_eq!(report.entries, 2, "both inputs should be archived");
+        assert!(!events.is_empty(), "at least one progress event expected");
+    }
+
+    // ------------------------------------------------------------------
+    // Test: do_compress_many surfaces DuplicateInput as duplicate-input
+    // ------------------------------------------------------------------
+    #[test]
+    fn compress_many_duplicate_input_maps_to_kind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p1 = dir.path().join("p1");
+        let p2 = dir.path().join("p2");
+        fs::create_dir(&p1).expect("p1");
+        fs::create_dir(&p2).expect("p2");
+        let a = write_small_file(&p1, "data.txt", b"x");
+        let b = write_small_file(&p2, "data.txt", b"y");
+        let output = dir.path().join("dup.zip");
+
+        let reg = JobRegistry::default();
+        let mut sink = |_: ProgressEvent| {};
+        let opts = CompressOpts {
+            format: Some("zip".into()),
+            level: None,
+            overwrite: false,
+            gitignore: false,
+            exclude: vec![],
+            checksum: false,
+        };
+        let err = do_compress_many(&reg, "j-dup", &[a, b], &output, opts, &mut sink)
+            .expect_err("duplicate basenames must error");
+        assert_eq!(err.kind, "duplicate-input", "expected duplicate-input kind");
     }
 
     // ------------------------------------------------------------------

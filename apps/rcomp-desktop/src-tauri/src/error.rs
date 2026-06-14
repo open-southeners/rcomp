@@ -61,6 +61,11 @@ impl From<rcomp_core::Error> for IpcError {
             }
             rcomp_core::Error::PathTraversal { .. } => Self::new("path-traversal", message),
             rcomp_core::Error::InvalidGlob { .. } => Self::new("invalid-glob", message),
+            rcomp_core::Error::DuplicateInput { name } => Self {
+                kind: "duplicate-input".into(),
+                message,
+                data: Some(serde_json::json!({ "name": name })),
+            },
             rcomp_core::Error::Io(_) => Self::new("io", message),
         }
     }
@@ -162,6 +167,18 @@ mod tests {
         assert_eq!(ipc.kind, "invalid-glob");
         assert!(ipc.message.contains("[bad"));
         assert!(ipc.data.is_none());
+    }
+
+    #[test]
+    fn duplicate_input_kind_and_data() {
+        let err = rcomp_core::Error::DuplicateInput {
+            name: "data.txt".into(),
+        };
+        let ipc: IpcError = err.into();
+        assert_eq!(ipc.kind, "duplicate-input");
+        assert!(ipc.message.contains("data.txt"));
+        let data = ipc.data.expect("data should be present");
+        assert_eq!(data["name"].as_str().unwrap(), "data.txt");
     }
 
     #[test]
