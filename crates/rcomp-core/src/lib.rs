@@ -50,7 +50,7 @@ pub use detect::{detect, detect_from_bytes, detect_from_extension, split_format_
 pub use error::{Error, Result};
 pub use format::{Codec, Container, Format};
 pub use level::Level;
-pub use ops::{CompressOptions, ExtractOptions, compress, extract, list};
+pub use ops::{CompressOptions, ExtractOptions, compress, compress_many, extract, list};
 pub use progress::{CancelToken, Entry, Progress, Report};
 pub use sidecar::{
     SidecarError, distinct_roots, format_sidecar, is_sha256_hex, parse_sidecar, wrap_dir_name,

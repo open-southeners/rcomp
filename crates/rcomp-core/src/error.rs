@@ -52,6 +52,16 @@ pub enum Error {
         message: String,
     },
 
+    /// Two or more inputs to a multi-input [`crate::compress_many`] share the
+    /// same final path component, which would collide as archive root entries.
+    ///
+    /// This is a usage error; the CLI maps it to exit 2.
+    #[error("duplicate input name `{name}`: multiple inputs resolve to the same archive root")]
+    DuplicateInput {
+        /// The colliding final path component.
+        name: String,
+    },
+
     /// A SHA-256 digest mismatch detected during extraction.
     ///
     /// The `kind` field distinguishes which digest failed:
@@ -135,6 +145,15 @@ mod tests {
             msg.contains("unclosed character class"),
             "should contain the message"
         );
+    }
+
+    #[test]
+    fn duplicate_input_displays_name() {
+        let err = Error::DuplicateInput {
+            name: "photos".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("photos"), "should contain the colliding name");
     }
 
     #[test]

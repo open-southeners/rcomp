@@ -58,7 +58,7 @@ use crate::{
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
     progress::{CancelToken, Entry, Progress, Report, copy_with_progress},
-    walk::{WalkOptions, collect as walk_collect},
+    walk::{WalkOptions, collect as walk_collect, collect_many},
 };
 
 #[cfg(feature = "rar")]
@@ -208,12 +208,85 @@ pub fn compress(
     input: &Path,
     output: &Path,
     opts: &CompressOptions,
+    on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    run_compress(
+        std::slice::from_ref(&input.to_path_buf()),
+        output,
+        opts,
+        false,
+        on_progress,
+    )
+}
+
+/// Compress one or more inputs into a **single** archive at `output`.
+///
+/// Each element of `inputs` becomes a top-level root in the resulting archive,
+/// named by its final path component (e.g. bundling `photos/` and `notes.txt`
+/// yields entries under `photos/…` plus `notes.txt`). This differs from
+/// [`compress`], which strips a single directory's own name and stores its
+/// children at the archive root.
+///
+/// # Format selection
+///
+/// Identical to [`compress`]: `opts.format` overrides everything, otherwise the
+/// format is inferred from the `output` extension.
+///
+/// # Silent-tar rule (generalised)
+///
+/// A **codec-only** format (e.g. `.gz`) can only hold a single stream. When the
+/// inputs require more than one stream — more than one input, or a single
+/// directory input — the format is automatically promoted to `tar` + codec so
+/// the inputs are first bundled into a tar stream. A single **file** input with
+/// a codec-only format is compressed directly (no tar), exactly like
+/// [`compress`]. As with [`compress`], the output file name is kept verbatim —
+/// the caller is responsible for warning the user.
+///
+/// # Errors
+///
+/// In addition to the errors documented on [`compress`]:
+///
+/// - [`Error::DuplicateInput`] — two inputs share the same final path component.
+/// - [`Error::Io`] — `inputs` is empty, or an input has no file name.
+pub fn compress_many(
+    inputs: &[PathBuf],
+    output: &Path,
+    opts: &CompressOptions,
+    on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    run_compress(inputs, output, opts, true, on_progress)
+}
+
+/// Shared implementation behind [`compress`] and [`compress_many`].
+///
+/// `bundle_roots` selects the entry-naming semantics:
+///
+/// - `false` ([`compress`]) — exactly one input; a directory's children are
+///   stored at the archive root (its own name is stripped).
+/// - `true` ([`compress_many`]) — each input's final path component is
+///   preserved as a top-level root via [`collect_many`].
+fn run_compress(
+    inputs: &[PathBuf],
+    output: &Path,
+    opts: &CompressOptions,
+    bundle_roots: bool,
     mut on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
     let start = Instant::now();
 
-    // --- Input must exist ---
-    let input_meta = fs::symlink_metadata(input)?;
+    // --- At least one input is required ---
+    if inputs.is_empty() {
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no inputs provided",
+        )));
+    }
+
+    // --- All inputs must exist (reported before any format/usage error) ---
+    let metas: Vec<fs::Metadata> = inputs
+        .iter()
+        .map(fs::symlink_metadata)
+        .collect::<io::Result<_>>()?;
 
     // --- Resolve format ---
     let mut format = if let Some(f) = opts.format {
@@ -226,9 +299,17 @@ pub fn compress(
     };
 
     // --- Silent-tar rule ---
-    // Codec-only format + directory input → treat as tar-inside-codec.
+    // A codec-only format holds a single stream, so it must be promoted to
+    // tar+codec whenever the inputs would produce more than one stream:
+    //   - bundle mode: more than one input, or a single directory input.
+    //   - single mode: a single directory input (the classic rule).
+    let needs_tar_wrap = if bundle_roots {
+        inputs.len() > 1 || metas[0].is_dir()
+    } else {
+        metas[0].is_dir()
+    };
     if format.container.is_none()
-        && input_meta.is_dir()
+        && needs_tar_wrap
         && let Some(codec) = format.codec
     {
         format = Format::layered(Container::Tar, codec);
@@ -251,36 +332,46 @@ pub fn compress(
         });
     }
 
-    // --- Pre-scan input sizes for progress total (file inputs only) ---
+    // --- Build the entry list and progress total ---
     //
-    // For directory inputs the walker below produces an accurate bytes_total
-    // that accounts for filtering.  For file inputs we scan now.
-    let file_bytes_total = if !input_meta.is_dir() {
-        scan_input_size(input)?
-    } else {
-        0 // will be replaced by walk_result.bytes_total below
+    // `walk_result` is `Some` whenever the backend should be driven by a
+    // pre-computed entry list (any directory input, or any multi-input bundle).
+    // It stays `None` only for a single bare-codec stream and for a single file
+    // written into a container, where the backend handles the lone file itself.
+    //
+    // `dispatch_input` is the path forwarded to `do_compress` as `input`; it is
+    // only meaningfully read on the codec-only path (a single file). On the
+    // container / tar+codec paths the `walk_result` entries are authoritative
+    // and `dispatch_input` is ignored by the backend.
+    let walk_opts = WalkOptions {
+        follow_gitignore: opts.follow_gitignore,
+        exclude: &opts.exclude,
     };
 
-    // --- Walk directory inputs for filtering and accurate bytes_total ---
-    //
-    // When the input is a directory, run the shared walker now so that:
-    // 1. `bytes_total` reflects only the *included* file sizes (a filtered
-    //    10 GiB `target/` must not inflate the denominator).
-    // 2. All three backends (tar, zip, 7z) receive the same pre-computed
-    //    entry list rather than each recursing independently.
-    //
-    // File inputs bypass the walker entirely (no filtering, excluded = 0).
-    let (walk_result, bytes_total, entries_excluded) = if input_meta.is_dir() {
-        let walk_opts = WalkOptions {
-            follow_gitignore: opts.follow_gitignore,
-            exclude: &opts.exclude,
-        };
-        let wr = walk_collect(input, &walk_opts)?;
+    let (walk_result, dispatch_input, bytes_total, entries_excluded) = if format.container.is_none()
+    {
+        // Codec-only: a single file (the silent-tar rule above promoted dirs /
+        // multi-input cases to tar+codec, so only a lone file reaches here).
+        let input = inputs[0].clone();
+        let bt = scan_input_size(&input)?;
+        (None, input, bt, 0u64)
+    } else if bundle_roots {
+        // Multi-input bundle: each input becomes a basename-prefixed root.
+        let wr = collect_many(inputs, &walk_opts)?;
         let bt = wr.bytes_total;
         let excl = wr.excluded;
-        (Some(wr), bt, excl)
+        (Some(wr), inputs[0].clone(), bt, excl)
+    } else if metas[0].is_dir() {
+        // Single directory into a container / tar+codec: strip the root name.
+        let wr = walk_collect(&inputs[0], &walk_opts)?;
+        let bt = wr.bytes_total;
+        let excl = wr.excluded;
+        (Some(wr), inputs[0].clone(), bt, excl)
     } else {
-        (None, file_bytes_total, 0u64)
+        // Single file into a container: the backend writes the lone entry.
+        let input = inputs[0].clone();
+        let bt = scan_input_size(&input)?;
+        (None, input, bt, 0u64)
     };
 
     let progress = Progress {
@@ -297,7 +388,7 @@ pub fn compress(
 
     // --- Dispatch ---
     let result = do_compress(
-        input,
+        &dispatch_input,
         output,
         format,
         opts.level,

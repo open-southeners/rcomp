@@ -164,6 +164,99 @@ pub(crate) fn collect(root: &Path, opts: &WalkOptions<'_>) -> Result<WalkResult>
 }
 
 // ---------------------------------------------------------------------------
+// collect_many
+// ---------------------------------------------------------------------------
+
+/// Build the merged archive entry list for one or more inputs, each becoming a
+/// top-level root in the resulting archive.
+///
+/// Unlike [`collect`] (which strips the root directory and stores its children
+/// at the archive top level), `collect_many` **keeps** each input's final path
+/// component as a root so multiple inputs do not collide:
+///
+/// - A **file** (or symlink) contributes one entry whose `rel` is its basename.
+/// - A **directory** contributes the directory itself (as a directory entry)
+///   plus all of its filtered descendants, each `rel` prefixed with the
+///   directory's basename. Filtering (`.gitignore` + exclude globs) is applied
+///   per directory via [`collect`].
+///
+/// Inputs are processed in the given order; within each directory, entries keep
+/// the deterministic sorted order from [`collect`]. [`WalkResult::bytes_total`]
+/// and [`WalkResult::excluded`] are summed across all inputs.
+///
+/// # Errors
+///
+/// - [`Error::DuplicateInput`] — two inputs share the same final path component.
+/// - [`Error::InvalidGlob`] — an exclude pattern is invalid (from [`collect`]).
+/// - [`Error::Io`] — an input has no file name, does not exist, or a directory
+///   entry could not be read.
+pub(crate) fn collect_many(inputs: &[PathBuf], opts: &WalkOptions<'_>) -> Result<WalkResult> {
+    use std::collections::HashSet;
+
+    let mut entries: Vec<WalkEntry> = Vec::new();
+    let mut bytes_total: u64 = 0;
+    let mut excluded: u64 = 0;
+    let mut seen: HashSet<std::ffi::OsString> = HashSet::new();
+
+    for input in inputs {
+        let name = input.file_name().ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("input path has no file name: {}", input.display()),
+            ))
+        })?;
+
+        if !seen.insert(name.to_os_string()) {
+            return Err(Error::DuplicateInput {
+                name: name.to_string_lossy().into_owned(),
+            });
+        }
+
+        let root_rel = PathBuf::from(name);
+        let meta = fs::symlink_metadata(input)?;
+
+        if meta.is_dir() {
+            // The directory root itself (preserves empty roots and mtime).
+            entries.push(WalkEntry {
+                abs: input.clone(),
+                rel: root_rel.clone(),
+                is_dir: true,
+                size: 0,
+            });
+
+            let wr = collect(input, opts)?;
+            bytes_total = bytes_total.saturating_add(wr.bytes_total);
+            excluded = excluded.saturating_add(wr.excluded);
+
+            for we in wr.entries {
+                entries.push(WalkEntry {
+                    abs: we.abs,
+                    rel: root_rel.join(&we.rel),
+                    is_dir: we.is_dir,
+                    size: we.size,
+                });
+            }
+        } else {
+            // File or symlink: a single root entry named by its basename.
+            let size = if meta.is_file() { meta.len() } else { 0 };
+            bytes_total = bytes_total.saturating_add(size);
+            entries.push(WalkEntry {
+                abs: input.clone(),
+                rel: root_rel,
+                is_dir: false,
+                size,
+            });
+        }
+    }
+
+    Ok(WalkResult {
+        entries,
+        bytes_total,
+        excluded,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
