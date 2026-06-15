@@ -102,6 +102,10 @@ pub fn get_launch_paths(state: tauri::State<'_, OpenPaths>) -> Vec<String> {
 }
 
 /// Convert macOS `RunEvent::Opened` URLs into existing on-disk file paths.
+///
+/// macOS-only: the `Opened` event that produces these URLs does not exist on
+/// other platforms, where files arrive via argv instead.
+#[cfg(target_os = "macos")]
 pub fn paths_from_urls<I: IntoIterator<Item = tauri::Url>>(urls: I) -> Vec<String> {
     urls.into_iter()
         .filter_map(|u| u.to_file_path().ok())
