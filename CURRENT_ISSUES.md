@@ -5,6 +5,17 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** Release notes / README + `.github/workflows/release.yml` (`desktop` job)
+  **What:** The desktop bundles built and attached by the new tag-triggered
+  `desktop` job are built with the default `rar` feature on, so they link the
+  freeware `unrar` library (extract-only, **not** OSI-approved). This is fine
+  for binary distribution but is currently undocumented for end users, and the
+  bundles are **unsigned** (macOS Gatekeeper / Windows SmartScreen warnings
+  expected). Discovered while implementing milestone step 2.
+  **Fix:** Milestone step 4 (docs) — add a line to the release notes / README
+  noting the unsigned + bundled-`unrar` status. Optionally offer an OSI-clean
+  (`--no-default-features`) bundle variant later (tracked in `PLAN_EXTRAS.md`).
+
 - **Where:** `apps/rcomp-desktop` (M4 UI flows — interactive behaviour)
   **What:** M4 was implemented and verified only headlessly (`bun run build`,
   `bunx svelte-check` = 0 errors, `cargo build -p rcomp-desktop`). The GUI was
