@@ -39,6 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      # release_id is consumed by the desktop job to attach bundles to the
+      # correct GitHub Release (rather than letting tauri-action create a new one).
+      release_id: ${{ steps.create_release.outputs.id }}
 
     steps:
       - name: Checkout
@@ -60,6 +63,7 @@ jobs:
           version: ${{ steps.version.outputs.version }}
 
       - name: Create GitHub Release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -206,3 +210,73 @@ jobs:
               fi
             done
           fi
+
+  # ── Desktop bundles ──────────────────────────────────────────────────────────
+  # Builds the Tauri app for all three platforms and attaches the installers
+  # to the GitHub Release created by the `release` job above.
+  # `needs: release` guarantees the Release (and its id) exist before we upload.
+  desktop:
+    name: Desktop bundles (${{ matrix.os }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # a failure on one OS must not delete assets from the others
+      matrix:
+        include:
+          # Universal binary for macOS — one DMG for Intel + Apple Silicon.
+          - os: macos-latest
+            args: "--target universal-apple-darwin"
+          - os: ubuntu-latest
+            args: ""
+          - os: windows-latest
+            args: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Required only on Linux — macOS and Windows runners ship all Tauri deps.
+      # Package list is kept in sync with ci.yml's bundle/desktop job.
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # The universal-apple-darwin target is a synthetic target that requires
+      # both native Apple Silicon and Intel toolchains to be registered.
+      - name: Add macOS universal targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        working-directory: apps/rcomp-desktop
+        run: bun install
+
+      # tauri-action runs `beforeBuildCommand` (bun run build) itself, then
+      # invokes `tauri build`, picks the correct per-OS artifacts, and uploads
+      # them to the GitHub Release identified by `releaseId`.
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/rcomp-desktop
+          releaseId: ${{ needs.release.outputs.release_id }}
+          args: ${{ matrix.args }}
