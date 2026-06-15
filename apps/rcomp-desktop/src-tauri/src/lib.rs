@@ -70,12 +70,15 @@ pub fn run() {
         }
     }
 
-    app.run(|app_handle, event| {
+    app.run(|_app_handle, _event| {
         // macOS delivers "open with" files as an Opened event, both at launch
-        // (possibly before the webview is ready) and while running.
-        if let tauri::RunEvent::Opened { urls } = event {
+        // (possibly before the webview is ready) and while running.  This
+        // RunEvent variant only exists on macOS; Windows/Linux deliver the
+        // paths via argv (handled above) and the single-instance plugin.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = _event {
             let paths = open_files::paths_from_urls(urls);
-            open_files::deliver(app_handle, paths);
+            open_files::deliver(_app_handle, paths);
         }
     });
 }
