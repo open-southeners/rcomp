@@ -2,19 +2,30 @@
 
 One tool for the most popular compression and archive formats.
 
-**`rcomp-core`** is a reusable Rust library (the product). **`rcomp`** is its
-first consumer: a command-line tool. A Tauri desktop app is the planned second
-consumer.
+**`rcomp-core`** is a reusable Rust library (the product). **`rcomp`** is the
+command-line tool, and **Rcomp** is the Tauri desktop app.
 
 ## Install
+
+Homebrew is the preferred installation method. Packages are published through
+the Open Southeners tap at
+[open-southeners/homebrew-tap](https://github.com/open-southeners/homebrew-tap):
+
+```
+brew tap open-southeners/tap
+brew install rcomp                    # CLI
+brew install --cask rcomp-desktop     # desktop app
+```
+
+If you only want the CLI and already have Rust installed, you can also install
+from crates.io:
 
 ```
 cargo install rcomp
 ```
 
-Both `rcomp` and `rcomp-core` are published to crates.io automatically when a
-GitHub release is tagged.  See [RELEASING.md](RELEASING.md) for the release
-runbook.
+`rcomp` and `rcomp-core` are published to crates.io automatically when a GitHub
+release is tagged. See [RELEASING.md](RELEASING.md) for the release runbook.
 
 ## Usage
 
