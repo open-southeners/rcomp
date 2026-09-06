@@ -19,6 +19,8 @@
     error?: string | null;
     emptyMessage?: string;
     onRemove?: (key: string) => void;
+    /** Optional summary stats shown in a footer bar below the table. */
+    footerStats?: { label: string; value: string }[];
   }
 
   let {
@@ -29,6 +31,7 @@
     error = null,
     emptyMessage = "Nothing here yet.",
     onRemove,
+    footerStats,
   }: Props = $props();
 </script>
 
@@ -91,6 +94,15 @@
         </tbody>
       </table>
     </div>
+
+    {#if footerStats && footerStats.length > 0}
+      <div class="footer-stats">
+        {#each footerStats as stat, i (stat.label)}
+          {#if i > 0}<span class="dot">•</span>{/if}
+          <span class="stat">{stat.label}: <strong>{stat.value}</strong></span>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -213,5 +225,24 @@
   .remove:hover {
     background: var(--danger-soft-bg);
     color: var(--danger-strong);
+  }
+
+  .footer-stats {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 0.4rem 0.1rem 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  .footer-stats .dot {
+    margin: 0 0.4rem;
+    color: var(--text-faint);
+  }
+
+  .footer-stats strong {
+    color: var(--text-secondary);
+    font-weight: 600;
   }
 </style>
