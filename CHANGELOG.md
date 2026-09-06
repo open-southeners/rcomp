@@ -7,16 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- `rcomp-desktop`: extracting an opened archive no longer uses a side panel —
-  a bar above the file list shows the archive's format/codec, whether a
-  `.sha256` sidecar is available to verify against, and the space saved, plus
-  a destination field (editable, or **Choose…** for the native picker) and an
-  **Extract Now** button. Multi-root archives are still wrapped into a
-  subfolder automatically, matching the CLI. The file list also gains a
-  footer with the total uncompressed size and average file size, and a search
-  box to filter entries by name.
+- `rcomp-desktop`: a **Settings** screen with an **Appearance** setting
+  (Auto/Light/Dark). Auto follows the OS light/dark preference live, as
+  before; Light/Dark now let you pin a theme regardless of the OS setting.
 
 ## [0.2.0] - 2026-06-15
 
