@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- `rcomp-desktop`: a **Settings** screen with an **Appearance** setting
-  (Auto/Light/Dark). Auto follows the OS light/dark preference live, as
-  before; Light/Dark now let you pin a theme regardless of the OS setting.
+- `rcomp-desktop`: replaced the plain OS title bar (macOS) with a branded one
+  showing the app icon, name, and version, while keeping the native
+  close/minimize/zoom controls.
 
 ## [0.2.0] - 2026-06-15
 

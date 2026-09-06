@@ -22,6 +22,7 @@
   import ProgressView from "./ProgressView.svelte";
   import SummaryView from "./SummaryView.svelte";
   import SettingsView from "./SettingsView.svelte";
+  import TitleBar from "./TitleBar.svelte";
   import { onFileDrop } from "../dragdrop";
   import { pickFile, pickFiles, pickFolder } from "../dialogs";
   import { inspectPath, listEntries, getLaunchPaths, onOpenPaths } from "../ipc";
@@ -317,35 +318,12 @@
 </script>
 
 <div class="workspace">
-  <div class="toolbar">
-    <span class="mode-label">
-      {#if mode === "open"}Open archive{:else if mode === "compose"}Compress{/if}
-    </span>
-    <div class="toolbar-actions">
-      {#if mode !== "empty"}
-        <button class="btn-reset" onclick={reset} title="Start over">New</button>
-      {/if}
-      <button
-        class="btn-icon"
-        onclick={() => (showSettings = true)}
-        title="Settings"
-        aria-label="Settings"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path
-            d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.774.773c.39.39.44 1.002.12 1.45l-.527.738c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.526c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.093c-.55 0-1.02-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.526c-.447.32-1.06.269-1.45-.12l-.773-.773a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.272-.807.108-1.204-.165-.397-.506-.71-.93-.781l-.894-.149c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.142-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-          <path
-            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
-    </div>
-  </div>
+  <TitleBar
+    {mode}
+    settingsActive={showSettings}
+    onReset={reset}
+    onOpenSettings={() => (showSettings = true)}
+  />
 
   {#if globalError}
     <div class="error-banner">
@@ -440,66 +418,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 1.2rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-subtle);
-  }
-
-  .mode-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-  }
-
-  .toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  .btn-reset {
-    padding: 0.25rem 0.7rem;
-    border: 1px solid var(--border-input);
-    border-radius: 5px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-
-  .btn-reset:hover {
-    background: var(--surface-hover);
-  }
-
-  .btn-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    padding: 0;
-    border: 1px solid var(--border-input);
-    border-radius: 6px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-
-  .btn-icon:hover {
-    background: var(--surface-hover);
-  }
-
-  .btn-icon svg {
-    width: 1.05rem;
-    height: 1.05rem;
   }
 
   .error-banner {
