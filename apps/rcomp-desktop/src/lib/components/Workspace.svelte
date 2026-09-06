@@ -3,25 +3,28 @@
    * Workspace — the archive-centric root content of rcomp desktop.
    *
    * The always-visible `FileList` IS the archive:
-   *   - **open**    — the list shows the contents of an opened archive; the
-   *                   side panel offers extraction.
+   *   - **open**    — the list shows the contents of an opened archive; an
+   *                   `ExtractBar` above it (not a side panel — narrow windows
+   *                   have no room for one) offers extraction.
    *   - **compose** — the list shows the files being assembled into one new
-   *                   archive; the side panel sets global params and compresses.
+   *                   archive; a side panel sets global params and compresses.
    *   - **empty**   — a drop/browse affordance.
    *
-   * An in-flight operation (`run`) and the post-operation `result` render in the
-   * side panel so the file list stays in view throughout.
+   * An in-flight operation (`run`) and the post-operation `result` render in a
+   * side panel (shared by both modes) so the file list stays in view
+   * throughout.
    */
   import { onMount, onDestroy } from "svelte";
   import DropZone from "./DropZone.svelte";
   import FileList from "./FileList.svelte";
   import ComposePanel from "./ComposePanel.svelte";
-  import ExtractCard from "./ExtractCard.svelte";
+  import ExtractBar from "./ExtractBar.svelte";
   import ProgressView from "./ProgressView.svelte";
   import SummaryView from "./SummaryView.svelte";
   import { onFileDrop } from "../dragdrop";
   import { pickFile, pickFiles, pickFolder } from "../dialogs";
   import { inspectPath, listEntries, getLaunchPaths, onOpenPaths } from "../ipc";
+  import { humanBytes } from "../types";
   import type {
     InspectResult,
     Entry,
@@ -35,6 +38,7 @@
   type WMode = "empty" | "open" | "compose";
 
   let mode = $state<WMode>("empty");
+  let searchQuery = $state("");
 
   // --- open mode ---
   let archivePath = $state<string | null>(null);
@@ -90,6 +94,32 @@
     mode === "open" ? "Archive is empty." : "Add files or a folder to bundle.",
   );
 
+  // Client-side filter for the search box in ExtractBar (Open mode only).
+  const filteredRows = $derived(
+    searchQuery
+      ? rows.filter((r) => r.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : rows,
+  );
+
+  // Footer stats for the archive file list: total uncompressed size and the
+  // average uncompressed entry size, computed from what list_entries already
+  // gives us (no extra IPC round-trip).
+  const uncompressedEntries = $derived(entries.filter((e) => !e.is_dir));
+  const totalUncompressed = $derived(
+    uncompressedEntries.reduce((sum, e) => sum + e.size, 0),
+  );
+  const openFooterStats = $derived(
+    mode === "open" && uncompressedEntries.length > 0
+      ? [
+          { label: "Original", value: humanBytes(totalUncompressed) },
+          {
+            label: "Avg file size",
+            value: humanBytes(totalUncompressed / uncompressedEntries.length),
+          },
+        ]
+      : undefined,
+  );
+
   // -------------------------------------------------------------------------
   // Routing: decide open vs compose from a set of incoming paths.
   // -------------------------------------------------------------------------
@@ -130,6 +160,7 @@
     archiveInspect = inspect;
     composeItems = [];
     result = null;
+    searchQuery = "";
     mode = "open";
 
     entriesLoading = true;
@@ -149,6 +180,7 @@
     archivePath = null;
     archiveInspect = null;
     result = null;
+    searchQuery = "";
     mode = "compose";
     await addToCompose(paths);
   }
@@ -201,7 +233,7 @@
   }
 
   // -------------------------------------------------------------------------
-  // Run / result handlers (shared by ExtractCard and ComposePanel).
+  // Run / result handlers (shared by ExtractBar and ComposePanel).
   // -------------------------------------------------------------------------
   function handleRunning(jobId: string): void {
     run = { jobId };
@@ -243,6 +275,7 @@
     latestProgress = null;
     result = null;
     globalError = null;
+    searchQuery = "";
   }
 
   onMount(async () => {
@@ -269,15 +302,6 @@
 </script>
 
 <div class="workspace">
-  {#if mode !== "empty"}
-    <div class="toolbar">
-      <span class="mode-label">
-        {#if mode === "open"}Open archive{:else}Compress{/if}
-      </span>
-      <button class="btn-reset" onclick={reset} title="Start over">New</button>
-    </div>
-  {/if}
-
   {#if globalError}
     <div class="error-banner">
       <strong>Error:</strong>
@@ -290,12 +314,38 @@
     <div class="empty-area">
       <DropZone onOpen={handleOpen} onCompressFiles={handleCompressFiles} />
     </div>
+  {:else if mode === "open" && !run && !result}
+    <div class="full-area">
+      {#if archivePath && archiveInspect}
+        <ExtractBar
+          inputPath={archivePath}
+          inspect={archiveInspect}
+          entries={entries}
+          searchQuery={searchQuery}
+          onSearchChange={(q) => (searchQuery = q)}
+          onRunning={handleRunning}
+          onProgress={handleProgress}
+          onDone={handleDoneExtract}
+          onError={handleError}
+          onIdle={handleCancel}
+        />
+      {/if}
+      <FileList
+        title={listTitle}
+        rows={filteredRows}
+        subtitle={listSubtitle}
+        loading={entriesLoading}
+        error={entriesError}
+        emptyMessage={listEmpty}
+        footerStats={openFooterStats}
+      />
+    </div>
   {:else}
     <div class="split">
       <section class="pane list-pane">
         <FileList
           title={listTitle}
-          rows={rows}
+          rows={filteredRows}
           subtitle={listSubtitle}
           loading={entriesLoading}
           error={entriesError}
@@ -314,15 +364,6 @@
             dest={result.dest}
             verified={result.verified}
             onReset={reset}
-          />
-        {:else if mode === "open" && archivePath && archiveInspect}
-          <ExtractCard
-            inputPath={archivePath}
-            inspect={archiveInspect}
-            onRunning={handleRunning}
-            onProgress={handleProgress}
-            onDone={handleDoneExtract}
-            onError={handleError}
           />
         {:else if mode === "compose"}
           <ComposePanel
@@ -346,36 +387,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 1.2rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-subtle);
-  }
-
-  .mode-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-  }
-
-  .btn-reset {
-    padding: 0.25rem 0.7rem;
-    border: 1px solid var(--border-input);
-    border-radius: 5px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-
-  .btn-reset:hover {
-    background: var(--surface-hover);
   }
 
   .error-banner {
@@ -405,6 +416,20 @@
     align-items: center;
     justify-content: center;
     padding: 2rem;
+  }
+
+  .full-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-height: 0;
+    padding: 1rem 1.2rem;
+  }
+
+  .full-area :global(.file-list) {
+    flex: 1;
+    min-height: 0;
   }
 
   .split {
