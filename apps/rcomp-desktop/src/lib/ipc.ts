@@ -9,6 +9,7 @@
 
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import type {
   InspectResult,
   Entry,
@@ -48,6 +49,11 @@ export function onShowChangelog(cb: () => void): Promise<UnlistenFn> {
 /** Fetch the workspace changelog, pre-rendered to HTML. */
 export async function getChangelog(): Promise<string> {
   return invoke<string>("get_changelog");
+}
+
+/** Fetch the running app's version, as set on the `rcomp-desktop` crate. */
+export async function getAppVersion(): Promise<string> {
+  return getVersion();
 }
 
 /** Subscribe to the native **File → Open Archive…** item. */

@@ -13,6 +13,9 @@
    * same as the native title bar would. On Windows/Linux the OS keeps its
    * own title bar above this one; the extra left inset is skipped there.
    */
+  import { onMount } from "svelte";
+  import { getAppVersion } from "../ipc";
+
   type WMode = "empty" | "open" | "compose";
 
   interface Props {
@@ -26,6 +29,16 @@
 
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+
+  // `tauri dev` serves the frontend through the Vite dev server, so
+  // `import.meta.env.DEV` is true there and false in a built app bundle.
+  const isDev = import.meta.env.DEV;
+
+  let version = $state<string | null>(null);
+
+  onMount(async () => {
+    version = await getAppVersion();
+  });
 </script>
 
 <header class="title-bar" class:mac-inset={isMac} data-tauri-drag-region>
@@ -44,12 +57,15 @@
       </svg>
       <div class="name-group">
         <span class="name">rcomp</span>
-        <button
-          class="version"
-          onclick={onOpenChangelog}
-          title="What's New"
-          aria-label="What's New"
-        >v0.2.0</button>
+        {#if isDev || version}
+          <button
+            class="version"
+            class:preview={isDev}
+            onclick={onOpenChangelog}
+            title="What's New"
+            aria-label="What's New"
+          >{isDev ? "preview" : `v${version}`}</button>
+        {/if}
       </div>
     </div>
   </div>
@@ -161,6 +177,17 @@
   .version:hover {
     background: var(--surface-hover);
     border-color: var(--accent);
+  }
+
+  .version.preview {
+    background: var(--preview-bg);
+    color: var(--preview-fg);
+    border-color: var(--preview-border);
+  }
+
+  .version.preview:hover {
+    background: var(--preview-bg);
+    border-color: var(--preview-fg);
   }
 
   .mode-label {
