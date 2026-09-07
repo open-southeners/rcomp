@@ -125,9 +125,9 @@
       : rows,
   );
 
-  // Footer stats for the archive file list: total uncompressed size and the
-  // average uncompressed entry size, computed from what list_entries already
-  // gives us (no extra IPC round-trip).
+  // Footer stats for the archive file list: total uncompressed size, the
+  // on-disk (compressed) archive size, and the per-entry size, computed from
+  // what list_entries/inspect already gives us (no extra IPC round-trip).
   const uncompressedEntries = $derived(entries.filter((e) => !e.is_dir));
   const totalUncompressed = $derived(
     uncompressedEntries.reduce((sum, e) => sum + e.size, 0),
@@ -136,8 +136,13 @@
     mode === "open" && uncompressedEntries.length > 0
       ? [
           { label: "Original", value: humanBytes(totalUncompressed) },
+          ...(archiveInspect?.size != null
+            ? [{ label: "On disk", value: humanBytes(archiveInspect.size) }]
+            : []),
           {
-            label: "Avg file size",
+            // A single-entry archive has nothing to average — it's just that
+            // file's size, so only call it "Avg" once there's more than one.
+            label: uncompressedEntries.length === 1 ? "File size" : "Avg file size",
             value: humanBytes(totalUncompressed / uncompressedEntries.length),
           },
         ]
@@ -362,8 +367,6 @@
           inputPath={archivePath}
           inspect={archiveInspect}
           entries={entries}
-          searchQuery={searchQuery}
-          onSearchChange={(q) => (searchQuery = q)}
           onRunning={handleRunning}
           onProgress={handleProgress}
           onDone={handleDoneExtract}
@@ -379,6 +382,8 @@
         error={entriesError}
         emptyMessage={listEmpty}
         footerStats={openFooterStats}
+        searchQuery={searchQuery}
+        onSearchChange={(q) => (searchQuery = q)}
       />
     </div>
   {:else}

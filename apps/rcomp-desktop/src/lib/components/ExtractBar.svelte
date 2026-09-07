@@ -10,7 +10,6 @@
    */
   import { pickFolder, confirmDialog } from "../dialogs";
   import { extract, wrapInfo, readSidecar } from "../ipc";
-  import { humanBytes } from "../types";
   import type {
     InspectResult,
     Entry,
@@ -25,8 +24,6 @@
     inputPath: string;
     inspect: InspectResult;
     entries: Entry[];
-    searchQuery: string;
-    onSearchChange: (query: string) => void;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string, verified: boolean) => void;
@@ -36,18 +33,8 @@
     onIdle: () => void;
   }
 
-  let {
-    inputPath,
-    inspect,
-    entries,
-    searchQuery,
-    onSearchChange,
-    onRunning,
-    onProgress,
-    onDone,
-    onError,
-    onIdle,
-  }: Props = $props();
+  let { inputPath, inspect, entries, onRunning, onProgress, onDone, onError, onIdle }: Props =
+    $props();
 
   let wrapData = $state<WrapInfo | null>(null);
   let sidecar = $state<SidecarData | null>(null);
@@ -178,14 +165,6 @@
     {#if percentSaved !== null}
       <span class="badge">{percentSaved.toFixed(1)}% saved</span>
     {/if}
-
-    <input
-      class="search-input"
-      type="text"
-      placeholder="Search files…"
-      value={searchQuery}
-      oninput={(e) => onSearchChange((e.currentTarget as HTMLInputElement).value)}
-    />
   </div>
 
   <div class="destination-row">
@@ -202,20 +181,6 @@
       {busy ? "Extracting…" : "Extract Now"}
     </button>
   </div>
-
-  {#if totalUncompressed > 0}
-    <p class="stats-line">
-      Original: <strong>{humanBytes(totalUncompressed)}</strong>
-      {#if inspect.size != null}
-        <span class="dot">•</span>
-        On disk: <strong>{humanBytes(inspect.size)}</strong>
-      {/if}
-      {#if uncompressedEntries.length > 0}
-        <span class="dot">•</span>
-        Avg file size: <strong>{humanBytes(totalUncompressed / uncompressedEntries.length)}</strong>
-      {/if}
-    </p>
-  {/if}
 </div>
 
 <style>
@@ -263,23 +228,6 @@
   .badge-info svg {
     width: 0.8rem;
     height: 0.8rem;
-  }
-
-  .search-input {
-    margin-left: auto;
-    width: 12rem;
-    max-width: 40vw;
-    padding: 0.3rem 0.55rem;
-    border: 1px solid var(--border-input);
-    border-radius: 6px;
-    font-size: 0.8rem;
-    color: var(--text);
-    background: var(--surface);
-  }
-
-  .search-input:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
   }
 
   .destination-row {
@@ -348,15 +296,5 @@
   .btn-primary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-  }
-
-  .stats-line {
-    margin: 0;
-    color: var(--text-faint);
-    font-size: 0.78rem;
-  }
-
-  .dot {
-    margin: 0 0.3rem;
   }
 </style>

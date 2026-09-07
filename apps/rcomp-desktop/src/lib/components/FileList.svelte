@@ -13,7 +13,7 @@
     /** Title shown above the list (e.g. "Archive contents" or "Items to bundle"). */
     title: string;
     rows: FileRow[];
-    /** Subtitle line (e.g. the archive path or item count); optional. */
+    /** Subtitle line (e.g. the archive path); shown truncated in the footer bar, when present. */
     subtitle?: string | null;
     loading?: boolean;
     error?: string | null;
@@ -21,6 +21,9 @@
     onRemove?: (key: string) => void;
     /** Optional summary stats shown in a footer bar below the table. */
     footerStats?: { label: string; value: string }[];
+    /** Search box shown next to the title, when both are provided. */
+    searchQuery?: string;
+    onSearchChange?: (query: string) => void;
   }
 
   let {
@@ -32,20 +35,29 @@
     emptyMessage = "Nothing here yet.",
     onRemove,
     footerStats,
+    searchQuery,
+    onSearchChange,
   }: Props = $props();
 </script>
 
 <div class="file-list">
   <div class="header">
     <h2 class="title">{title}</h2>
-    {#if rows.length > 0}
-      <span class="count">{rows.length} item{rows.length === 1 ? "" : "s"}</span>
-    {/if}
+    <div class="header-right">
+      {#if onSearchChange}
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Search files…"
+          value={searchQuery ?? ""}
+          oninput={(e) => onSearchChange?.((e.currentTarget as HTMLInputElement).value)}
+        />
+      {/if}
+      {#if rows.length > 0}
+        <span class="count">{rows.length} item{rows.length === 1 ? "" : "s"}</span>
+      {/if}
+    </div>
   </div>
-
-  {#if subtitle}
-    <p class="subtitle" title={subtitle}>{subtitle}</p>
-  {/if}
 
   {#if loading}
     <p class="state-msg">Loading…</p>
@@ -95,12 +107,17 @@
       </table>
     </div>
 
-    {#if footerStats && footerStats.length > 0}
-      <div class="footer-stats">
-        {#each footerStats as stat, i (stat.label)}
-          {#if i > 0}<span class="dot">•</span>{/if}
-          <span class="stat">{stat.label}: <strong>{stat.value}</strong></span>
-        {/each}
+    {#if (footerStats && footerStats.length > 0) || subtitle}
+      <div class="footer-bar">
+        <div class="footer-stats">
+          {#each footerStats ?? [] as stat, i (stat.label)}
+            {#if i > 0}<span class="dot">•</span>{/if}
+            <span class="stat">{stat.label}: <strong>{stat.value}</strong></span>
+          {/each}
+        </div>
+        {#if subtitle}
+          <p class="footer-path" title={subtitle}>{subtitle}</p>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -117,28 +134,44 @@
 
   .header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
   .title {
     margin: 0;
     font-size: 1rem;
     color: var(--text);
+    white-space: nowrap;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .search-input {
+    width: 12rem;
+    max-width: 40vw;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--border-input);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .search-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .count {
     font-size: 0.8rem;
     color: var(--text-faint);
     white-space: nowrap;
-  }
-
-  .subtitle {
-    margin: 0;
-    font-size: 0.78rem;
-    color: var(--text-faint);
-    word-break: break-all;
   }
 
   .state-msg {
@@ -227,11 +260,19 @@
     color: var(--danger-strong);
   }
 
+  .footer-bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0.1rem 0;
+  }
+
   .footer-stats {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    padding: 0.4rem 0.1rem 0;
+    flex-shrink: 0;
     font-size: 0.78rem;
     color: var(--text-muted);
   }
@@ -244,5 +285,17 @@
   .footer-stats strong {
     color: var(--text-secondary);
     font-weight: 600;
+  }
+
+  .footer-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.78rem;
+    color: var(--text-faint);
   }
 </style>
