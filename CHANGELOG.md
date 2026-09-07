@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picker. Auto (the default) picks by content — a folder or multi-item
   bundle gets `.tar.zst`, a single file gets `.zst` — or you can pin one
   format for every new archive.
+- `rcomp-desktop`: the macOS **Help** menu now links to the project's
+  repository and the Open Southeners website, and adds a **What's New** item
+  that opens an in-app viewer of this changelog — no need to visit GitHub to
+  see what changed.
 
 ### Changed
 

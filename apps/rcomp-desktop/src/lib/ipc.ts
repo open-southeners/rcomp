@@ -37,6 +37,19 @@ export function onOpenPaths(cb: (paths: string[]) => void): Promise<UnlistenFn> 
   return listen<string[]>("open-paths", (event) => cb(event.payload));
 }
 
+/**
+ * Subscribe to the native Help menu's "What's New" item. Returns the
+ * unlisten function.
+ */
+export function onShowChangelog(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("show-changelog", () => cb());
+}
+
+/** Fetch the workspace changelog, pre-rendered to HTML. */
+export async function getChangelog(): Promise<string> {
+  return invoke<string>("get_changelog");
+}
+
 /** Inspect the filesystem entry at `path`. */
 export async function inspectPath(path: string): Promise<InspectResult> {
   return invoke<InspectResult>("inspect", { path });

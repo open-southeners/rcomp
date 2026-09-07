@@ -1,6 +1,8 @@
+pub mod changelog;
 pub mod commands;
 pub mod error;
 pub mod job;
+pub mod menu;
 pub mod open_files;
 pub mod progress;
 
@@ -19,7 +21,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .manage(job::JobRegistry::default())
         .manage(open_files::OpenPaths::default())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init());
 
     // Desktop single-instance: a second launch (e.g. "Open with" on
     // Windows/Linux) forwards its argv to this running instance instead of
@@ -34,6 +37,13 @@ pub fn run() {
         }));
     }
 
+    // Custom top-bar menu (macOS menu bar): Tauri's platform default plus
+    // rcomp's Help-menu links and changelog viewer — see `menu::build`.
+    #[cfg(desktop)]
+    {
+        builder = builder.menu(menu::build).on_menu_event(menu::handle_event);
+    }
+
     let app = builder
         .invoke_handler(tauri::generate_handler![
             commands::inspect,
@@ -46,6 +56,7 @@ pub fn run() {
             commands::write_sidecar,
             commands::wrap_info,
             open_files::get_launch_paths,
+            changelog::get_changelog,
         ])
         // Cancel all in-flight jobs when the last window requests close.
         // `cancel_all` trips every registered CancelToken; worker threads call
