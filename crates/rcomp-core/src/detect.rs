@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn magic_bzip2() {
-        let header = [b'B', b'Z', b'h', b'9'];
+        let header = *b"BZh9";
         assert_eq!(
             detect_from_bytes(&header),
             Some(Format::codec(Codec::Bzip2))
