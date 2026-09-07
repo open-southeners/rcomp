@@ -29,18 +29,23 @@
 </script>
 
 <header class="title-bar" class:mac-inset={isMac} data-tauri-drag-region>
-  <div class="brand" data-tauri-drag-region>
-    <svg class="logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <rect width="48" height="48" rx="12" fill="#0066FF" />
-      <rect x="4" y="4" width="40" height="40" rx="10" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
-      <path d="M14 16H34M14 24H34M14 32H34" stroke="white" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 6" />
-      <path d="M24 12V36" stroke="white" stroke-width="3.5" stroke-linecap="round" />
-      <rect x="20" y="20" width="8" height="8" rx="2" fill="white" />
-      <circle cx="24" cy="24" r="1.5" fill="#0066FF" />
-    </svg>
-    <div class="name-group">
-      <span class="name">rcomp</span>
-      <span class="version">v0.2.0</span>
+  <div class="left" data-tauri-drag-region>
+    {#if isMac}
+      <div class="divider" data-tauri-drag-region></div>
+    {/if}
+    <div class="brand" data-tauri-drag-region>
+      <svg class="logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <rect width="48" height="48" rx="12" fill="#0066FF" />
+        <rect x="4" y="4" width="40" height="40" rx="10" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+        <path d="M14 16H34M14 24H34M14 32H34" stroke="white" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 6" />
+        <path d="M24 12V36" stroke="white" stroke-width="3.5" stroke-linecap="round" />
+        <rect x="20" y="20" width="8" height="8" rx="2" fill="white" />
+        <circle cx="24" cy="24" r="1.5" fill="#0066FF" />
+      </svg>
+      <div class="name-group">
+        <span class="name">rcomp</span>
+        <span class="version">v0.2.0</span>
+      </div>
     </div>
   </div>
 
@@ -86,6 +91,20 @@
 
   .title-bar.mac-inset {
     padding-left: 78px;
+  }
+
+  .left {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    min-width: 0;
+  }
+
+  .divider {
+    width: 1px;
+    height: 1.1rem;
+    background: var(--border);
+    flex-shrink: 0;
   }
 
   .brand {
