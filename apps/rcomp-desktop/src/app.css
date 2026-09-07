@@ -54,6 +54,11 @@
   --warn-bg: #fffbeb;
   --warn-border: #fde68a;
 
+  /* Preview / dev build */
+  --preview-bg: #f5f3ff;
+  --preview-fg: #7c3aed;
+  --preview-border: #ddd6fe;
+
   color: var(--text);
   background-color: var(--bg);
 }
@@ -95,6 +100,10 @@
 
     --warn-bg: #38300f;
     --warn-border: #6a5a1d;
+
+    --preview-bg: #2e2350;
+    --preview-fg: #c4b5fd;
+    --preview-border: #4c3a7d;
   }
 }
 
@@ -133,6 +142,10 @@
 
   --warn-bg: #38300f;
   --warn-border: #6a5a1d;
+
+  --preview-bg: #2e2350;
+  --preview-fg: #c4b5fd;
+  --preview-border: #4c3a7d;
 }
 
 *,

@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rcomp-desktop`: the macOS **Help** menu now links to the project's
   repository and the Open Southeners website, and adds a **What's New** item
   that opens an in-app viewer of this changelog — no need to visit GitHub to
-  see what changed. The version badge in the title bar opens the same viewer.
+  see what changed. The version badge in the title bar opens the same viewer,
+  now shows the app's actual running version instead of a hardcoded number,
+  and reads **preview** (in purple) when running a dev build instead of a
+  packaged release.
 - `rcomp-desktop`: the **File** menu (macOS/Windows) gains **New Archive from
   Files…**, **New Archive from Folder…**, **Open Archive…**, **Extract Now**,
   **Compress Archive**, and **Close Archive**; **Edit** gains **Find** and
