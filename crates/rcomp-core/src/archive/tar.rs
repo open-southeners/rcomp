@@ -261,11 +261,14 @@ impl<R: Read> Read for CountingReader<'_, '_, R> {
 /// After writing a regular file the mtime stored in its tar header is restored
 /// via [`filetime::set_file_mtime`].  Only nonzero header mtimes are applied.
 ///
-/// Returns `(entry_count, reader)` where `reader` is the underlying byte
-/// stream that was passed in, returned after all entries are consumed.  The
-/// caller may drain any remaining bytes from it (e.g. to ensure a wrapping
-/// SHA-256 hasher sees the complete decompressed stream, including trailing
-/// end-of-archive blocks that the tar crate leaves unread).
+/// Returns `(entry_count, bytes_written, reader)` where `bytes_written` is
+/// the total decompressed byte count actually written to regular files under
+/// `dest` (directories, symlinks, and hard links contribute 0), and `reader`
+/// is the underlying byte stream that was passed in, returned after all
+/// entries are consumed.  The caller may drain any remaining bytes from it
+/// (e.g. to ensure a wrapping SHA-256 hasher sees the complete decompressed
+/// stream, including trailing end-of-archive blocks that the tar crate
+/// leaves unread).
 ///
 /// # Errors
 ///
@@ -279,9 +282,10 @@ pub(crate) fn extract<'r>(
     overwrite: bool,
     ctx: &mut OpCtx<'_>,
     counter: Option<Arc<AtomicU64>>,
-) -> Result<(u64, Box<dyn Read + 'r>)> {
+) -> Result<(u64, u64, Box<dyn Read + 'r>)> {
     let mut archive = Archive::new(r);
     let mut count: u64 = 0;
+    let mut bytes_written: u64 = 0;
 
     // Collect (out_path, unix_mode) pairs for directories so we can apply
     // their permissions after all entries are written.  A read-only directory
@@ -327,7 +331,7 @@ pub(crate) fn extract<'r>(
             // is supplied (e.g. in unit tests that call extract directly) fall
             // back to a plain cancel-checked copy that does not advance
             // bytes_done at all — the caller is responsible for syncing.
-            copy_extract(&mut entry, &mut file, ctx, counter.as_ref())?;
+            bytes_written += copy_extract(&mut entry, &mut file, ctx, counter.as_ref())?;
             // Restore unix permissions where available.
             #[cfg(unix)]
             if let Some(m) = mode {
@@ -415,7 +419,7 @@ pub(crate) fn extract<'r>(
     // (e.g. the trailing end-of-archive zero block that the tar crate stops
     // reading before EOF) through any wrapping hasher.
     let reader = archive.into_inner();
-    Ok((count, reader))
+    Ok((count, bytes_written, reader))
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +428,8 @@ pub(crate) fn extract<'r>(
 
 /// Copy bytes from `r` to `w` in 64 KiB chunks, checking for cancellation and
 /// optionally syncing `ctx.progress.bytes_done` from `counter` instead of
-/// accumulating the decompressed byte count.
+/// accumulating the decompressed byte count.  Returns the number of bytes
+/// written to `w`.
 ///
 /// When `counter` is `Some`, after each chunk we load the atomic counter (which
 /// reflects compressed bytes consumed by the upstream [`AtomicCountingReader`])
@@ -439,9 +444,10 @@ fn copy_extract(
     w: &mut dyn Write,
     ctx: &mut OpCtx<'_>,
     counter: Option<&Arc<AtomicU64>>,
-) -> crate::Result<()> {
+) -> crate::Result<u64> {
     const BUF_SIZE: usize = 64 * 1024;
     let mut buf = [0u8; BUF_SIZE];
+    let mut written: u64 = 0;
 
     loop {
         ctx.check_cancel()?;
@@ -450,6 +456,7 @@ fn copy_extract(
             break;
         }
         w.write_all(&buf[..n])?;
+        written += n as u64;
         if let Some(ctr) = counter {
             // Sync progress.bytes_done to the compressed-bytes counter so the
             // user-visible percentage is based on the compressed input size.
@@ -457,7 +464,7 @@ fn copy_extract(
             (ctx.on_progress)(&ctx.progress);
         }
     }
-    Ok(())
+    Ok(written)
 }
 
 // ---------------------------------------------------------------------------
@@ -576,7 +583,7 @@ mod tests {
             &mut ctx,
             None,
         )
-        .map(|(_, _)| ())
+        .map(|(_, _, _)| ())
         .expect("extract failed");
         dest
     }
@@ -680,7 +687,7 @@ mod tests {
         let mut cb2: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx2 = make_ctx!(token2, &mut *cb2);
 
-        let (n2, _) = extract(
+        let (n2, _, _) = extract(
             Box::new(Cursor::new(&buf)),
             dest.path(),
             false,

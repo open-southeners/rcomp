@@ -24,14 +24,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.sha256` sidecar is available to verify against, and the space saved, plus
   a destination field (editable, or **Choose…** for the native picker) and an
   **Extract Now** button. Multi-root archives are still wrapped into a
-  subfolder automatically, matching the CLI. The file list also gains a
-  footer with the total uncompressed size and average file size, and a search
-  box to filter entries by name.
+  subfolder automatically, matching the CLI. The file list's status bar shows
+  the archive's original and on-disk size and its file size (averaged, for
+  more than one file), next to a search box for filtering entries by name
+  and the archive's path.
+- `rcomp-desktop`: reworked the compose sidebar to match the app's design —
+  the format picker is now a container button-grid (None/TAR/ZIP/7-Zip) with
+  a separate compression-algorithm dropdown, disabled with a hint when the
+  container manages its own compression (ZIP, 7-Zip); the Fast/Best/Edge
+  level picker is now a 3-stop slider. The file list also gains its own
+  **Add Files** button and a drag & drop hint for building a bundle.
 - `rcomp-desktop`: replaced the plain OS title bar (macOS) with a branded one
-  showing the app icon, name, and version, while keeping the native
-  close/minimize/zoom controls. The bar remains draggable, same as the
-  native title bar it replaces.
+  showing the app icon, name, and version, with a divider separating it from
+  the native traffic lights, while keeping the native close/minimize/zoom
+  controls. The bar remains draggable, same as the native title bar it
+  replaces.
 - `rcomp-desktop`: refreshed the app icon artwork.
+
+### Fixed
+
+- Extracting an archive whose contents don't get wrapped in a subfolder (a
+  single-root archive extracted straight into an existing, non-empty
+  destination) no longer reports a wildly inflated extracted size — the
+  reported `output_bytes` used to include every unrelated file already
+  sitting in the destination folder. Affects both the `rcomp` CLI summary and
+  `rcomp-desktop`'s extraction summary.
+- `rcomp-desktop`: dragging the title bar no longer scrolls the whole window
+  out of view — only the file list and compose sidebar scroll, as intended.
 
 ## [0.2.0] - 2026-06-15
 

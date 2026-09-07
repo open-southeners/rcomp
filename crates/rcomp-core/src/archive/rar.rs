@@ -73,7 +73,8 @@ use super::{OpCtx, sanitize::sanitize_entry_path};
 /// `bytes_done` advances by `FileHeader::unpacked_size` after each entry is
 /// written.  `bytes_total` remains `None` (set by the caller in `ops.rs`).
 ///
-/// Returns the number of entries extracted.
+/// Returns `(entry_count, bytes_written)` where `bytes_written` is the sum of
+/// each entry's `unpacked_size` (directories contribute 0).
 ///
 /// # Errors
 ///
@@ -86,7 +87,7 @@ pub(crate) fn extract(
     dest: &Path,
     overwrite: bool,
     ctx: &mut OpCtx<'_>,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     ctx.check_cancel()?;
 
     let mut open = Archive::new(archive)
@@ -94,6 +95,7 @@ pub(crate) fn extract(
         .map_err(|e| io::Error::other(e.to_string()))?;
 
     let mut count: u64 = 0;
+    let mut bytes_written: u64 = 0;
 
     loop {
         ctx.check_cancel()?;
@@ -148,10 +150,13 @@ pub(crate) fn extract(
         }
 
         ctx.add_bytes(unpacked_size);
+        if !is_directory {
+            bytes_written += unpacked_size;
+        }
         count += 1;
     }
 
-    Ok(count)
+    Ok((count, bytes_written))
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +265,8 @@ mod tests {
         let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx = make_ctx!(token, &mut *cb);
 
-        let n = extract(&fixture(), dest.path(), false, &mut ctx).expect("extract should succeed");
+        let (n, _) =
+            extract(&fixture(), dest.path(), false, &mut ctx).expect("extract should succeed");
         assert_eq!(n, 1, "expected 1 entry extracted");
 
         let content = std::fs::read(dest.path().join("VERSION")).unwrap();

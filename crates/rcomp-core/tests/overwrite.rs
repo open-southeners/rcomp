@@ -409,3 +409,36 @@ fn compress_no_overwrite_cleanup_does_not_remove_existing_file() {
         "archive file size must be unchanged after a refused overwrite"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Extract — output_bytes must not fold in pre-existing unrelated files
+// ---------------------------------------------------------------------------
+
+/// Regression guard: extracting a small archive into a destination directory
+/// that already contains a large, unrelated file must report `output_bytes`
+/// for the bytes this extraction actually wrote, not the size of everything
+/// already sitting in `dest` (e.g. extracting a tiny archive into `~/Downloads`
+/// must not report gigabytes just because Downloads already has other files
+/// in it).
+#[test]
+fn extract_output_bytes_excludes_preexisting_unrelated_files() {
+    let work = TempDir::new().unwrap();
+    let src = make_two_file_dir(&work);
+
+    let archive = work.path().join("multi.zip");
+    compress(&src, &archive, &Default::default(), nop).unwrap();
+
+    let dest = TempDir::new().unwrap();
+    // An unrelated file already in `dest`, much larger than anything the
+    // archive contains ("content a" + "content b" = 18 bytes total).
+    std::fs::write(dest.path().join("unrelated.bin"), vec![0u8; 1024 * 1024]).unwrap();
+
+    let report =
+        extract(&archive, dest.path(), &Default::default(), nop).expect("extract must succeed");
+
+    assert_eq!(
+        report.output_bytes, 18,
+        "output_bytes must reflect only the bytes this extraction wrote, \
+         not the pre-existing unrelated file already in dest"
+    );
+}

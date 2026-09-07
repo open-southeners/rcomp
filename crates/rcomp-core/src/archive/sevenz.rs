@@ -321,7 +321,9 @@ fn push_entry<W: Write + io::Seek>(
 /// `bytes_total.is_none()` for all progress callbacks emitted during 7z
 /// extraction (consistent with zip).
 ///
-/// Returns the number of entries extracted.
+/// Returns `(entry_count, bytes_written)` where `bytes_written` is the total
+/// uncompressed byte count actually written to regular files under `dest`
+/// (directories contribute 0).
 ///
 /// # Errors
 ///
@@ -334,7 +336,7 @@ pub(crate) fn extract(
     dest: &Path,
     overwrite: bool,
     ctx: &mut OpCtx<'_>,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     // Check cancel before we start.
     ctx.check_cancel()?;
 
@@ -466,7 +468,7 @@ pub(crate) fn extract(
     ctx.check_cancel()?;
 
     count += file_count_extracted;
-    Ok(count)
+    Ok((count, total_bytes))
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +617,8 @@ mod tests {
         let token2 = CancelToken::default();
         let mut cb2: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx2 = make_ctx!(token2, &mut *cb2);
-        let n2 = extract(&archive_path, dest.path(), false, &mut ctx2).expect("extract failed");
+        let (n2, _) =
+            extract(&archive_path, dest.path(), false, &mut ctx2).expect("extract failed");
         assert_eq!(n2, 1);
         assert_eq!(
             std::fs::read(dest.path().join("hello.txt")).unwrap(),
@@ -667,7 +670,7 @@ mod tests {
         cursor.into_inner()
     }
 
-    fn extract_malicious(bytes: Vec<u8>, dest: &Path) -> crate::Result<u64> {
+    fn extract_malicious(bytes: Vec<u8>, dest: &Path) -> crate::Result<(u64, u64)> {
         let archive_dir = TempDir::new().unwrap();
         let archive_path = archive_dir.path().join("malicious.7z");
         std::fs::write(&archive_path, &bytes).unwrap();
