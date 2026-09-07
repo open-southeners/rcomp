@@ -24,6 +24,9 @@
     /** Search box shown next to the title, when both are provided. */
     searchQuery?: string;
     onSearchChange?: (query: string) => void;
+    /** When provided, shows an "Add Files" button in the header and a
+     *  drag & drop hint above the table (Compose mode only). */
+    onAddFiles?: () => void;
   }
 
   let {
@@ -37,7 +40,15 @@
     footerStats,
     searchQuery,
     onSearchChange,
+    onAddFiles,
   }: Props = $props();
+
+  function handleDropHintKeydown(e: KeyboardEvent): void {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onAddFiles?.();
+    }
+  }
 </script>
 
 <div class="file-list">
@@ -53,11 +64,41 @@
           oninput={(e) => onSearchChange?.((e.currentTarget as HTMLInputElement).value)}
         />
       {/if}
+      {#if onAddFiles}
+        <button type="button" class="btn-add-files" onclick={onAddFiles}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+          </svg>
+          Add Files
+        </button>
+      {/if}
       {#if rows.length > 0}
         <span class="count">{rows.length} item{rows.length === 1 ? "" : "s"}</span>
       {/if}
     </div>
   </div>
+
+  {#if onAddFiles}
+    <div
+      class="drop-hint"
+      role="button"
+      tabindex="0"
+      onclick={onAddFiles}
+      onkeydown={handleDropHintKeydown}
+    >
+      <span class="drop-hint-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path
+            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </span>
+      <p class="drop-hint-label">Drag &amp; drop files or folders here</p>
+      <p class="drop-hint-sub">or click to browse files</p>
+    </div>
+  {/if}
 
   {#if loading}
     <p class="state-msg">Loading…</p>
@@ -172,6 +213,81 @@
     font-size: 0.8rem;
     color: var(--text-faint);
     white-space: nowrap;
+  }
+
+  .btn-add-files {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--accent-subtle-fg);
+    border-radius: 8px;
+    background: var(--accent-subtle-bg);
+    color: var(--accent-subtle-fg);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+
+  .btn-add-files:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: var(--accent-contrast);
+  }
+
+  .btn-add-files svg {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
+  .drop-hint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 1.4rem 1rem;
+    border: 2px dashed var(--border-input);
+    border-radius: 16px;
+    background: var(--surface-subtle);
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+  }
+
+  .drop-hint:hover {
+    border-color: var(--accent);
+    background: var(--accent-subtle-bg);
+  }
+
+  .drop-hint-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-bottom: 0.15rem;
+    border-radius: 999px;
+    background: var(--accent-subtle-bg);
+    color: var(--accent);
+  }
+
+  .drop-hint-icon svg {
+    width: 1.35rem;
+    height: 1.35rem;
+  }
+
+  .drop-hint-label {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .drop-hint-sub {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-faint);
   }
 
   .state-msg {
