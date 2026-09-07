@@ -1,13 +1,21 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-gray:0.88485,1.00000"
+    "solid" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "image-name" : "rcomp-desktop-icon.png",
-          "name" : "rcomp-desktop-icon"
+          "blend-mode" : "normal",
+          "image-name" : "app_icon.png",
+          "name" : "app_icon",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         }
       ],
       "shadow" : {
