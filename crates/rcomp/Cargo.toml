@@ -17,7 +17,7 @@ default = ["rar"]
 rar = ["rcomp-core/rar"]
 
 [dependencies]
-rcomp-core = { path = "../rcomp-core", version = "0.2.0" }
+rcomp-core = { path = "../rcomp-core", version = "0.3.0" }
 clap.workspace = true
 anyhow.workspace = true
 ctrlc.workspace = true
