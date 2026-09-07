@@ -27,6 +27,7 @@
   import { pickFile, pickFiles, pickFolder } from "../dialogs";
   import { inspectPath, listEntries, getLaunchPaths, onOpenPaths } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
+  import { loadDefaultFormat, saveDefaultFormat } from "../preferences";
   import { humanBytes } from "../types";
   import type {
     InspectResult,
@@ -54,6 +55,13 @@
   function setAppearance(next: Appearance): void {
     appearance = next;
     applyAppearance(next);
+  }
+
+  let defaultFormatPref = $state<string | null>(loadDefaultFormat());
+
+  function setDefaultFormatPref(next: string | null): void {
+    defaultFormatPref = next;
+    saveDefaultFormat(next);
   }
 
   // --- open mode ---
@@ -338,6 +346,8 @@
       <SettingsView
         appearance={appearance}
         onChange={setAppearance}
+        defaultFormat={defaultFormatPref}
+        onChangeDefaultFormat={setDefaultFormatPref}
         onClose={() => (showSettings = false)}
       />
     </div>
@@ -399,6 +409,7 @@
         {:else if mode === "compose"}
           <ComposePanel
             items={composeItems}
+            defaultFormatPref={defaultFormatPref}
             onAddFiles={handleAddFiles}
             onAddFolder={handleAddFolder}
             onRunning={handleRunning}

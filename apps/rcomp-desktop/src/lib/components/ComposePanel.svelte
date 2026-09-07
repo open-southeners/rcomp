@@ -10,11 +10,14 @@
    */
   import { pickSavePath, confirmDialog } from "../dialogs";
   import { compressMany, writeSidecar } from "../ipc";
-  import { FORMATS, LEVELS, extensionFor } from "../formats";
+  import { FORMATS, LEVELS, extensionFor, defaultFormat } from "../formats";
   import type { StagedItem, ProgressEvent, Report, IpcError } from "../types";
 
   interface Props {
     items: StagedItem[];
+    /** User's pinned default format from Settings, or `null` for "Auto"
+     *  (per-content smart default — see `defaultFormat` in `../formats`). */
+    defaultFormatPref: string | null;
     onAddFiles: () => void;
     onAddFolder: () => void;
     onRunning: (jobId: string) => void;
@@ -23,9 +26,19 @@
     onError: (err: IpcError) => void;
   }
 
-  let { items, onAddFiles, onAddFolder, onRunning, onProgress, onDone, onError }: Props = $props();
+  let {
+    items,
+    defaultFormatPref,
+    onAddFiles,
+    onAddFolder,
+    onRunning,
+    onProgress,
+    onDone,
+    onError,
+  }: Props = $props();
 
   let selectedFormat = $state("tar.zst");
+  let formatTouched = $state(false);
   let outputPath = $state("");
   let outputTouched = $state(false);
   let level = $state<"Fast" | "Best" | "Edge">("Best");
@@ -37,6 +50,19 @@
   let busy = $state(false);
 
   const selectedFormatEntry = $derived(FORMATS.find((f) => f.name === selectedFormat));
+
+  // Follows the pinned Settings preference, or a smart per-content default
+  // (folder/multi-item bundles need a container; a single file doesn't) —
+  // until the user picks a format themselves.
+  $effect(() => {
+    if (formatTouched) return;
+    if (defaultFormatPref) {
+      selectedFormat = defaultFormatPref;
+    } else {
+      const isDirLike = items.length > 1 || items.some((it) => it.isDir);
+      selectedFormat = defaultFormat(isDirLike);
+    }
+  });
 
   function dirName(p: string): string {
     const normalized = p.replace(/\\/g, "/");
@@ -179,7 +205,12 @@
 
   <div class="input-row">
     <label class="field-label" for="compose-format">Format</label>
-    <select id="compose-format" class="select-input" bind:value={selectedFormat}>
+    <select
+      id="compose-format"
+      class="select-input"
+      bind:value={selectedFormat}
+      onchange={() => (formatTouched = true)}
+    >
       {#each FORMATS as fmt (fmt.name)}
         <option value={fmt.name}>{fmt.label}</option>
       {/each}
