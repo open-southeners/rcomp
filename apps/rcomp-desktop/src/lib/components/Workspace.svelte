@@ -401,6 +401,7 @@
     {mode}
     settingsActive={showSettings}
     onOpenSettings={() => (showSettings = true)}
+    onOpenChangelog={() => (showChangelog = true)}
   />
 
   {#if globalError}
