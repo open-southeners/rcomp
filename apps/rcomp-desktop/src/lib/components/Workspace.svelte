@@ -22,10 +22,11 @@
   import ProgressView from "./ProgressView.svelte";
   import SummaryView from "./SummaryView.svelte";
   import SettingsView from "./SettingsView.svelte";
+  import ChangelogView from "./ChangelogView.svelte";
   import TitleBar from "./TitleBar.svelte";
   import { onFileDrop } from "../dragdrop";
   import { pickFile, pickFiles } from "../dialogs";
-  import { inspectPath, listEntries, getLaunchPaths, onOpenPaths } from "../ipc";
+  import { inspectPath, listEntries, getLaunchPaths, onOpenPaths, onShowChangelog } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
   import { loadDefaultFormat, saveDefaultFormat } from "../preferences";
   import { humanBytes } from "../types";
@@ -44,6 +45,7 @@
 
   let mode = $state<WMode>("empty");
   let showSettings = $state(false);
+  let showChangelog = $state(false);
   let searchQuery = $state("");
 
   // Applied immediately (not just in an effect) so the pinned theme, if any,
@@ -88,6 +90,7 @@
 
   let unlistenDrop: (() => void) | null = null;
   let unlistenOpen: (() => void) | null = null;
+  let unlistenChangelog: (() => void) | null = null;
 
   function baseName(p: string): string {
     return p.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? p;
@@ -313,6 +316,10 @@
       void routePaths(paths);
     });
 
+    unlistenChangelog = await onShowChangelog(() => {
+      showChangelog = true;
+    });
+
     // Drain any files the app was launched with (also flips the backend's
     // "ready" flag so subsequent deliveries arrive via the event above).
     const launch = await getLaunchPaths();
@@ -322,6 +329,7 @@
   onDestroy(() => {
     if (unlistenDrop) unlistenDrop();
     if (unlistenOpen) unlistenOpen();
+    if (unlistenChangelog) unlistenChangelog();
   });
 </script>
 
@@ -349,6 +357,10 @@
         onChangeDefaultFormat={setDefaultFormatPref}
         onClose={() => (showSettings = false)}
       />
+    </div>
+  {:else if showChangelog}
+    <div class="full-area">
+      <ChangelogView onClose={() => (showChangelog = false)} />
     </div>
   {:else if mode === "empty"}
     <div class="empty-area">
