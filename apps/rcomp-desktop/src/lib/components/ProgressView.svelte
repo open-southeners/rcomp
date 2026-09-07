@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { cancelJob } from "../ipc";
+  import { onMount, onDestroy } from "svelte";
+  import { cancelJob, onMenuCancelJob } from "../ipc";
   import { humanBytes } from "../types";
   import type { ProgressEvent } from "../types";
 
@@ -12,6 +13,16 @@
   let { progress, jobId, onCancel }: Props = $props();
 
   let cancelling = $state(false);
+
+  let unlistenMenu: (() => void) | null = null;
+
+  onMount(async () => {
+    unlistenMenu = await onMenuCancelJob(() => void handleCancel());
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
+  });
 
   const pct = $derived(
     progress && progress.bytes_total != null && progress.bytes_total > 0

@@ -8,8 +8,9 @@
    * path, and the bundle-into-one-archive action via `compress_many`. Adding
    * and removing items is delegated to the parent workspace.
    */
+  import { onMount, onDestroy } from "svelte";
   import { pickSavePath, confirmDialog } from "../dialogs";
-  import { compressMany, writeSidecar } from "../ipc";
+  import { compressMany, writeSidecar, onMenuCompress } from "../ipc";
   import {
     CODECS,
     CONTAINERS,
@@ -48,6 +49,16 @@
   let excludeText = $state("");
   let inlineError = $state<string | null>(null);
   let busy = $state(false);
+
+  let unlistenMenu: (() => void) | null = null;
+
+  onMount(async () => {
+    unlistenMenu = await onMenuCompress(() => void handleCompress());
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
+  });
 
   const level = $derived(LEVELS[levelIndex]);
   const selectedFormat = $derived(composeFormat(container, codec));

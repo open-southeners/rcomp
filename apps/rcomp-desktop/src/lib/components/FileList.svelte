@@ -6,8 +6,10 @@
    * or staged inputs (Compose mode) into a uniform list of {@link FileRow}s.
    * Removable rows (Compose) show an ✕ button wired to `onRemove`.
    */
+  import { onMount, onDestroy } from "svelte";
   import { humanBytes } from "../types";
   import type { FileRow } from "../types";
+  import { onMenuFind } from "../ipc";
 
   interface Props {
     /** Title shown above the list (e.g. "Archive contents" or "Items to bundle"). */
@@ -49,6 +51,17 @@
       onAddFiles?.();
     }
   }
+
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let unlistenMenu: (() => void) | null = null;
+
+  onMount(async () => {
+    unlistenMenu = await onMenuFind(() => searchInputEl?.focus());
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
+  });
 </script>
 
 <div class="file-list">
@@ -62,6 +75,7 @@
           placeholder="Search files…"
           value={searchQuery ?? ""}
           oninput={(e) => onSearchChange?.((e.currentTarget as HTMLInputElement).value)}
+          bind:this={searchInputEl}
         />
       {/if}
       {#if onAddFiles}
