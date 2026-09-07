@@ -18,11 +18,10 @@
   interface Props {
     mode: WMode;
     settingsActive: boolean;
-    onReset: () => void;
     onOpenSettings: () => void;
   }
 
-  let { mode, settingsActive, onReset, onOpenSettings }: Props = $props();
+  let { mode, settingsActive, onOpenSettings }: Props = $props();
 
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -54,9 +53,6 @@
   </div>
 
   <div class="actions">
-    {#if mode !== "empty"}
-      <button class="btn-reset" onclick={onReset} title="Start over">New</button>
-    {/if}
     <button
       class="btn-icon"
       class:active={settingsActive}
@@ -163,21 +159,6 @@
     align-items: center;
     gap: 0.6rem;
     -webkit-app-region: no-drag;
-  }
-
-  .btn-reset {
-    padding: 0.25rem 0.7rem;
-    border: 1px solid var(--border-input);
-    border-radius: 5px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-
-  .btn-reset:hover {
-    background: var(--surface-hover);
   }
 
   .btn-icon {

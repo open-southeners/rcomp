@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rcomp-desktop`: dragging the title bar no longer scrolls the whole window
   out of view — only the file list and compose sidebar scroll, as intended.
 
+### Removed
+
+- `rcomp-desktop`: removed the title bar's **New** button. It reset the
+  workspace without cancelling or warning about an in-progress compress or
+  extract job, so a stray click mid-operation could lose work; use **New
+  operation** on the completion screen once a job finishes, or start a fresh
+  operation from an empty workspace instead.
+
 ## [0.2.0] - 2026-06-15
 
 ### Added
