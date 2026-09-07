@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository and the Open Southeners website, and adds a **What's New** item
   that opens an in-app viewer of this changelog — no need to visit GitHub to
   see what changed.
+- `rcomp-desktop`: the **File** menu (macOS/Windows) gains **New Archive from
+  Files…**, **New Archive from Folder…**, **Open Archive…**, **Extract Now**,
+  **Compress Archive**, and **Close Archive**; **Edit** gains **Find** and
+  **Cancel Job**. Each mirrors an action already available in the workspace
+  UI and is a no-op when it doesn't currently apply.
 
 ### Changed
 
@@ -55,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rcomp-desktop`'s extraction summary.
 - `rcomp-desktop`: dragging the title bar no longer scrolls the whole window
   out of view — only the file list and compose sidebar scroll, as intended.
+- `rcomp-desktop`: opening a file from outside the app (double-click, "Open
+  With…", or handing a file to an already-running instance) no longer
+  silently starts a new archive bundle when the file isn't a supported
+  format — it now shows a clear error instead, and always opens a valid
+  archive even if a bundle was already in progress.
 
 ### Removed
 

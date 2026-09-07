@@ -8,8 +8,9 @@
    * bar above the list instead. Mirrors the CLI's wrap behaviour automatically
    * (see rcomp-core's silent-tar / wrap-folder rule) via `wrap_info`.
    */
+  import { onMount, onDestroy } from "svelte";
   import { pickFolder, confirmDialog } from "../dialogs";
-  import { extract, wrapInfo, readSidecar } from "../ipc";
+  import { extract, wrapInfo, readSidecar, onMenuExtractNow } from "../ipc";
   import type {
     InspectResult,
     Entry,
@@ -39,6 +40,16 @@
   let wrapData = $state<WrapInfo | null>(null);
   let sidecar = $state<SidecarData | null>(null);
   let busy = $state(false);
+
+  let unlistenMenu: (() => void) | null = null;
+
+  onMount(async () => {
+    unlistenMenu = await onMenuExtractNow(() => void handleExtractNow());
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
+  });
 
   function dirName(p: string): string {
     const normalized = p.replace(/\\/g, "/");

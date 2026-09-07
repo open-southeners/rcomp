@@ -25,8 +25,18 @@
   import ChangelogView from "./ChangelogView.svelte";
   import TitleBar from "./TitleBar.svelte";
   import { onFileDrop } from "../dragdrop";
-  import { pickFile, pickFiles } from "../dialogs";
-  import { inspectPath, listEntries, getLaunchPaths, onOpenPaths, onShowChangelog } from "../ipc";
+  import { pickFile, pickFiles, pickFolder } from "../dialogs";
+  import {
+    inspectPath,
+    listEntries,
+    getLaunchPaths,
+    onOpenPaths,
+    onShowChangelog,
+    onMenuOpenArchive,
+    onMenuNewArchiveFromFiles,
+    onMenuNewArchiveFromFolder,
+    onMenuCloseArchive,
+  } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
   import { loadDefaultFormat, saveDefaultFormat } from "../preferences";
   import { humanBytes } from "../types";
@@ -91,6 +101,7 @@
   let unlistenDrop: (() => void) | null = null;
   let unlistenOpen: (() => void) | null = null;
   let unlistenChangelog: (() => void) | null = null;
+  let menuUnlisten: (() => void)[] = [];
 
   function baseName(p: string): string {
     return p.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? p;
@@ -187,6 +198,43 @@
     await startCompose(paths);
   }
 
+  // -------------------------------------------------------------------------
+  // Opening a file the OS handed us directly (double-click / "Open With…" /
+  // launch args), as opposed to a path picked or dropped from inside the app.
+  //
+  // Unlike `routePaths`, this never falls back to Compose: the user asked the
+  // OS to open this specific file with rcomp, so an unsupported format should
+  // surface as an error, not silently start a new bundle from it. It also
+  // ignores the "add to the in-progress bundle" case `routePaths` has for
+  // drag & drop — an OS open always means "open", even mid-compose.
+  // -------------------------------------------------------------------------
+  async function openFromOS(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    globalError = null;
+    const problems: string[] = [];
+
+    for (const path of paths) {
+      let res: InspectResult;
+      try {
+        res = await inspectPath(path);
+      } catch (err: unknown) {
+        problems.push((err as { message?: string }).message ?? `Failed to inspect ${baseName(path)}.`);
+        continue;
+      }
+      if (!res.exists) {
+        problems.push(`Path not found: ${path}`);
+        continue;
+      }
+      if (res.is_archive) {
+        await openArchive(path, res);
+      } else {
+        problems.push(`"${baseName(path)}" isn't a supported archive format.`);
+      }
+    }
+
+    if (problems.length > 0) globalError = problems.join(" ");
+  }
+
   async function openArchive(path: string, inspect: InspectResult): Promise<void> {
     archivePath = path;
     archiveInspect = inspect;
@@ -259,6 +307,11 @@
     if (paths.length > 0) await routePaths(paths);
   }
 
+  async function handleNewArchiveFromFolder(): Promise<void> {
+    const path = await pickFolder();
+    if (path) await routePaths([path]);
+  }
+
   // -------------------------------------------------------------------------
   // Run / result handlers (shared by ExtractBar and ComposePanel).
   // -------------------------------------------------------------------------
@@ -313,23 +366,33 @@
     // Subscribe to live OS "open with" deliveries BEFORE draining the startup
     // buffer, so no delivery is lost in the gap.
     unlistenOpen = await onOpenPaths((paths) => {
-      void routePaths(paths);
+      void openFromOS(paths);
     });
 
     unlistenChangelog = await onShowChangelog(() => {
       showChangelog = true;
     });
 
+    menuUnlisten = await Promise.all([
+      onMenuOpenArchive(() => void handleOpen()),
+      onMenuNewArchiveFromFiles(() => void handleCompressFiles()),
+      onMenuNewArchiveFromFolder(() => void handleNewArchiveFromFolder()),
+      onMenuCloseArchive(() => {
+        if (mode !== "empty") reset();
+      }),
+    ]);
+
     // Drain any files the app was launched with (also flips the backend's
     // "ready" flag so subsequent deliveries arrive via the event above).
     const launch = await getLaunchPaths();
-    if (launch.length > 0) await routePaths(launch);
+    if (launch.length > 0) await openFromOS(launch);
   });
 
   onDestroy(() => {
     if (unlistenDrop) unlistenDrop();
     if (unlistenOpen) unlistenOpen();
     if (unlistenChangelog) unlistenChangelog();
+    menuUnlisten.forEach((fn) => fn());
   });
 </script>
 

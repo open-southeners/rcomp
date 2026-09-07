@@ -50,6 +50,46 @@ export async function getChangelog(): Promise<string> {
   return invoke<string>("get_changelog");
 }
 
+/** Subscribe to the native **File → Open Archive…** item. */
+export function onMenuOpenArchive(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-open-archive", () => cb());
+}
+
+/** Subscribe to the native **File → New Archive from Files…** item. */
+export function onMenuNewArchiveFromFiles(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-new-archive-files", () => cb());
+}
+
+/** Subscribe to the native **File → New Archive from Folder…** item. */
+export function onMenuNewArchiveFromFolder(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-new-archive-folder", () => cb());
+}
+
+/** Subscribe to the native **File → Close Archive** item. */
+export function onMenuCloseArchive(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-close-archive", () => cb());
+}
+
+/** Subscribe to the native **File → Extract Now** item. */
+export function onMenuExtractNow(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-extract-now", () => cb());
+}
+
+/** Subscribe to the native **File → Compress Archive** item. */
+export function onMenuCompress(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-compress", () => cb());
+}
+
+/** Subscribe to the native **Edit → Find** item. */
+export function onMenuFind(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-find", () => cb());
+}
+
+/** Subscribe to the native **Edit → Cancel Job** item. */
+export function onMenuCancelJob(cb: () => void): Promise<UnlistenFn> {
+  return listen<void>("menu-cancel-job", () => cb());
+}
+
 /** Inspect the filesystem entry at `path`. */
 export async function inspectPath(path: string): Promise<InspectResult> {
   return invoke<InspectResult>("inspect", { path });
