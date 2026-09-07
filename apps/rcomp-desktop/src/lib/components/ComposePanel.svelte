@@ -10,7 +10,17 @@
    */
   import { pickSavePath, confirmDialog } from "../dialogs";
   import { compressMany, writeSidecar } from "../ipc";
-  import { FORMATS, LEVELS, extensionFor, defaultFormat } from "../formats";
+  import {
+    CODECS,
+    CONTAINERS,
+    LEVELS,
+    composeFormat,
+    containerAllowsCodec,
+    decomposeFormat,
+    extensionFor,
+    defaultFormat,
+    type ContainerName,
+  } from "../formats";
   import type { StagedItem, ProgressEvent, Report, IpcError } from "../types";
 
   interface Props {
@@ -18,30 +28,20 @@
     /** User's pinned default format from Settings, or `null` for "Auto"
      *  (per-content smart default — see `defaultFormat` in `../formats`). */
     defaultFormatPref: string | null;
-    onAddFiles: () => void;
-    onAddFolder: () => void;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string) => void;
     onError: (err: IpcError) => void;
   }
 
-  let {
-    items,
-    defaultFormatPref,
-    onAddFiles,
-    onAddFolder,
-    onRunning,
-    onProgress,
-    onDone,
-    onError,
-  }: Props = $props();
+  let { items, defaultFormatPref, onRunning, onProgress, onDone, onError }: Props = $props();
 
-  let selectedFormat = $state("tar.zst");
+  let container = $state<ContainerName>("tar");
+  let codec = $state<string | null>("zstd");
   let formatTouched = $state(false);
   let outputPath = $state("");
   let outputTouched = $state(false);
-  let level = $state<"Fast" | "Best" | "Edge">("Best");
+  let levelIndex = $state(1);
   let checksum = $state(false);
   let gitignore = $state(true);
   let overwrite = $state(false);
@@ -49,19 +49,22 @@
   let inlineError = $state<string | null>(null);
   let busy = $state(false);
 
-  const selectedFormatEntry = $derived(FORMATS.find((f) => f.name === selectedFormat));
+  const level = $derived(LEVELS[levelIndex]);
+  const selectedFormat = $derived(composeFormat(container, codec));
+  // A bare codec (no container) is the "codec-only" case the silent-tar
+  // dialog cares about — a single stream can't hold more than one input.
+  const isBareCodec = $derived(container === "none");
 
   // Follows the pinned Settings preference, or a smart per-content default
   // (folder/multi-item bundles need a container; a single file doesn't) —
   // until the user picks a format themselves.
   $effect(() => {
     if (formatTouched) return;
-    if (defaultFormatPref) {
-      selectedFormat = defaultFormatPref;
-    } else {
-      const isDirLike = items.length > 1 || items.some((it) => it.isDir);
-      selectedFormat = defaultFormat(isDirLike);
-    }
+    const isDirLike = items.length > 1 || items.some((it) => it.isDir);
+    const name = defaultFormatPref ?? defaultFormat(isDirLike);
+    const decomposed = decomposeFormat(name);
+    container = decomposed.container;
+    codec = decomposed.codec;
   });
 
   function dirName(p: string): string {
@@ -109,7 +112,7 @@
     // Silent-tar dialog: a codec-only format holds only one stream, so a
     // multi-input or directory bundle is transparently tarred first.
     const needsTar = items.length > 1 || items.some((it) => it.isDir);
-    if (selectedFormatEntry?.codecOnly && needsTar) {
+    if (isBareCodec && needsTar) {
       const ok = await confirmDialog(
         `These items will be archived as tar inside ${outputPath}. Other tools expect a .tar.* name. Continue?`,
         "Items will be tarred",
@@ -181,11 +184,19 @@
 </script>
 
 <div class="compose-panel">
-  <h2 class="card-title">Compress</h2>
-
-  <div class="staged-actions">
-    <button class="btn-secondary" onclick={onAddFiles}>Add files…</button>
-    <button class="btn-secondary" onclick={onAddFolder}>Add folder…</button>
+  <div class="panel-header">
+    <h2 class="card-title">
+      <svg class="panel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+        <line x1="4" y1="6" x2="20" y2="6" stroke-linecap="round" />
+        <line x1="4" y1="12" x2="20" y2="12" stroke-linecap="round" />
+        <line x1="4" y1="18" x2="20" y2="18" stroke-linecap="round" />
+        <circle cx="9" cy="6" r="2" fill="var(--surface)" />
+        <circle cx="15" cy="12" r="2" fill="var(--surface)" />
+        <circle cx="11" cy="18" r="2" fill="var(--surface)" />
+      </svg>
+      <span>Compression Parameters</span>
+    </h2>
+    <p class="card-subtitle">Configure the archive format, codec, and compression level</p>
   </div>
 
   <div class="input-row">
@@ -204,26 +215,70 @@
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="compose-format">Format</label>
-    <select
-      id="compose-format"
-      class="select-input"
-      bind:value={selectedFormat}
-      onchange={() => (formatTouched = true)}
-    >
-      {#each FORMATS as fmt (fmt.name)}
-        <option value={fmt.name}>{fmt.label}</option>
+    <span class="field-label" id="compose-container-label">Archive Container Format</span>
+    <div class="container-grid" role="group" aria-labelledby="compose-container-label">
+      {#each CONTAINERS as c (c.name)}
+        <button
+          type="button"
+          class="container-btn"
+          class:active={container === c.name}
+          onclick={() => {
+            container = c.name;
+            formatTouched = true;
+          }}
+        >
+          {c.label}
+        </button>
       {/each}
-    </select>
+    </div>
   </div>
 
   <div class="input-row">
-    <label class="field-label" for="compose-level">Level</label>
-    <select id="compose-level" class="select-input select-small" bind:value={level}>
-      {#each LEVELS as l (l)}
-        <option value={l}>{l}</option>
+    <label class="field-label" for="compose-codec">Compression Algorithm</label>
+    {#if containerAllowsCodec(container)}
+      <select
+        id="compose-codec"
+        class="select-input"
+        value={codec ?? ""}
+        onchange={(e) => {
+          const v = (e.currentTarget as HTMLSelectElement).value;
+          codec = v === "" ? null : v;
+          formatTouched = true;
+        }}
+      >
+        {#if container === "tar"}
+          <option value="">None — plain, uncompressed tar</option>
+        {/if}
+        {#each CODECS as c (c.name)}
+          <option value={c.name}>{c.label}</option>
+        {/each}
+      </select>
+    {:else}
+      <p class="field-hint">
+        {CONTAINERS.find((c) => c.name === container)?.label} manages its own compression.
+      </p>
+    {/if}
+  </div>
+
+  <div class="level-card">
+    <div class="level-row">
+      <span class="level-title">Compression Level</span>
+      <span class="level-value">{level}</span>
+    </div>
+    <input
+      type="range"
+      min="0"
+      max="2"
+      step="1"
+      bind:value={levelIndex}
+      class="level-slider"
+      aria-label="Compression level"
+    />
+    <div class="level-ticks">
+      {#each LEVELS as l, i (l)}
+        <span class:active={i === levelIndex}>{l}</span>
       {/each}
-    </select>
+    </div>
   </div>
 
   <div class="input-row">
@@ -257,7 +312,14 @@
   {/if}
 
   <button class="btn-primary" onclick={handleCompress} disabled={busy || items.length === 0}>
-    {busy ? "Compressing…" : "Compress"}
+    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+      <path
+        d="M4 8h16M6 8v10a1 1 0 001 1h10a1 1 0 001-1V8M10 12h4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+    <span>{busy ? "Compressing…" : "Compress & Save Archive"}</span>
   </button>
 </div>
 
@@ -268,15 +330,31 @@
     gap: 0.75rem;
   }
 
+  .panel-header {
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+
   .card-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     color: var(--text);
   }
 
-  .staged-actions {
-    display: flex;
-    gap: 0.4rem;
+  .panel-icon {
+    width: 1rem;
+    height: 1rem;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .card-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-faint);
   }
 
   .input-row {
@@ -328,8 +406,87 @@
     color: var(--text);
   }
 
-  .select-small {
-    width: 10rem;
+  .container-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.35rem;
+  }
+
+  .container-btn {
+    padding: 0.4rem 0.3rem;
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+
+  .container-btn:hover {
+    background: var(--surface-hover);
+  }
+
+  .container-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  .field-hint {
+    margin: 0;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .level-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .level-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+  }
+
+  .level-title {
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .level-value {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .level-slider {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .level-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+  }
+
+  .level-ticks .active {
+    color: var(--text-secondary);
+    font-weight: 600;
   }
 
   .toggles {
@@ -358,24 +515,41 @@
   }
 
   .btn-primary {
-    align-self: flex-start;
-    padding: 0.45rem 1.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.7rem 1rem;
     border: none;
-    border-radius: 6px;
-    background: var(--accent);
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-hover));
     color: var(--accent-contrast);
-    font-size: 0.95rem;
+    font-size: 0.92rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.12s;
+    box-shadow: 0 10px 22px -10px rgba(0, 0, 0, 0.45);
+    transition: filter 0.12s, transform 0.06s;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+    filter: brightness(1.08);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: scale(0.99);
   }
 
   .btn-primary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .btn-icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
   }
 
   .btn-secondary {

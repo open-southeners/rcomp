@@ -24,7 +24,7 @@
   import SettingsView from "./SettingsView.svelte";
   import TitleBar from "./TitleBar.svelte";
   import { onFileDrop } from "../dragdrop";
-  import { pickFile, pickFiles, pickFolder } from "../dialogs";
+  import { pickFile, pickFiles } from "../dialogs";
   import { inspectPath, listEntries, getLaunchPaths, onOpenPaths } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
   import { loadDefaultFormat, saveDefaultFormat } from "../preferences";
@@ -245,11 +245,6 @@
     if (paths.length > 0) await addToCompose(paths);
   }
 
-  async function handleAddFolder(): Promise<void> {
-    const path = await pickFolder();
-    if (path) await addToCompose([path]);
-  }
-
   // Empty-state affordances (DropZone buttons).
   async function handleOpen(): Promise<void> {
     const path = await pickFile();
@@ -397,6 +392,7 @@
           error={entriesError}
           emptyMessage={listEmpty}
           onRemove={mode === "compose" ? removeItem : undefined}
+          onAddFiles={mode === "compose" ? handleAddFiles : undefined}
         />
       </section>
 
@@ -415,8 +411,6 @@
           <ComposePanel
             items={composeItems}
             defaultFormatPref={defaultFormatPref}
-            onAddFiles={handleAddFiles}
-            onAddFolder={handleAddFolder}
             onRunning={handleRunning}
             onProgress={handleProgress}
             onDone={handleDoneCompress}
