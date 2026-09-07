@@ -126,14 +126,6 @@
     line-height: 1.5;
   }
 
-  .changelog-body :global(a) {
-    color: var(--accent);
-  }
-
-  .changelog-body :global(a:hover) {
-    color: var(--accent-hover);
-  }
-
   .changelog-body :global(code) {
     background: var(--surface-subtle);
     border: 1px solid var(--border);
