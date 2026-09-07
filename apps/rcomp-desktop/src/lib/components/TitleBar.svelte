@@ -30,21 +30,18 @@
 
 <header class="title-bar" class:mac-inset={isMac} data-tauri-drag-region>
   <div class="brand" data-tauri-drag-region>
-    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
-      <rect x="2" y="2" width="96" height="96" rx="24" fill="#0066FF" />
-      <rect x="7" y="7" width="86" height="86" rx="20" fill="none" stroke="#3884FF" stroke-width="2.5" />
-      <rect x="46" y="21" width="8" height="58" rx="4" fill="#FFFFFF" />
-      <rect x="26" y="30" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="26" y="46.5" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="26" y="63" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="54" y="30" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="54" y="46.5" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="54" y="63" width="20" height="7" rx="3.5" fill="#FFFFFF" />
-      <rect x="41.5" y="41.5" width="17" height="17" rx="5" fill="#FFFFFF" />
-      <circle cx="50" cy="50" r="3.5" fill="#0066FF" />
+    <svg class="logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <rect width="48" height="48" rx="12" fill="#0066FF" />
+      <rect x="4" y="4" width="40" height="40" rx="10" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+      <path d="M14 16H34M14 24H34M14 32H34" stroke="white" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 6" />
+      <path d="M24 12V36" stroke="white" stroke-width="3.5" stroke-linecap="round" />
+      <rect x="20" y="20" width="8" height="8" rx="2" fill="white" />
+      <circle cx="24" cy="24" r="1.5" fill="#0066FF" />
     </svg>
-    <span class="name">rcomp</span>
-    <span class="version">v0.2.0</span>
+    <div class="name-group">
+      <span class="name">rcomp</span>
+      <span class="version">v0.2.0</span>
+    </div>
   </div>
 
   <div class="mode-label" data-tauri-drag-region>
@@ -79,8 +76,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.5rem 0.9rem;
+    gap: 1rem;
+    padding: 0.8rem 1.05rem;
     border-bottom: 1px solid var(--border);
     background: var(--surface-subtle);
     /* Native macOS traffic lights sit roughly in this space when overlaid. */
@@ -94,24 +91,38 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.65rem;
     min-width: 0;
   }
 
+  /* Tauri only treats the exact mousedown target as a drag region, not its
+     ancestors, so clicks landing on the logo or text would otherwise miss
+     the `data-tauri-drag-region` on `.brand`/`.title-bar`. */
+  .brand * {
+    pointer-events: none;
+  }
+
   .logo {
-    width: 1.35rem;
-    height: 1.35rem;
+    width: 1.87rem;
+    height: 1.87rem;
     flex-shrink: 0;
   }
 
+  .name-group {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
   .name {
+    font-size: 1.05rem;
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.01em;
   }
 
   .version {
-    padding: 0.05rem 0.4rem;
+    padding: 0.15rem 0.4rem;
     border-radius: 5px;
     background: var(--accent-subtle-bg);
     color: var(--accent-subtle-fg);
@@ -154,8 +165,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
+    width: 2.1rem;
+    height: 2.1rem;
     padding: 0;
     border: 1px solid var(--border-input);
     border-radius: 6px;
