@@ -320,7 +320,9 @@ fn unix_perms(opts: SimpleFileOptions, meta: &fs::Metadata) -> SimpleFileOptions
 /// written.  The crate's own `enclosed_name` is consulted only when the raw
 /// name is empty or contains NULL bytes.
 ///
-/// Returns the number of entries extracted.
+/// Returns `(entry_count, bytes_written)` where `bytes_written` is the total
+/// decompressed byte count actually written to regular files under `dest`
+/// (directories and symlinks contribute 0).
 ///
 /// # Errors
 ///
@@ -333,10 +335,11 @@ pub(crate) fn extract(
     dest: &Path,
     overwrite: bool,
     ctx: &mut OpCtx<'_>,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     let file = fs::File::open(archive)?;
     let mut zip = ZipArchive::new(file).map_err(|e| io::Error::other(e.to_string()))?;
     let mut count: u64 = 0;
+    let mut bytes_written: u64 = 0;
 
     // Collect (out_path, unix_mode) pairs for directories so we can apply
     // their permissions after all entries are written.  A read-only directory
@@ -429,7 +432,7 @@ pub(crate) fn extract(
                     .by_index(idx)
                     .map_err(|e| io::Error::other(e.to_string()))?;
                 let mut out_file = fs::File::create(&out_path)?;
-                copy_with_progress(&mut entry, &mut out_file, ctx)?;
+                bytes_written += copy_with_progress(&mut entry, &mut out_file, ctx)?;
             }
             // Restore unix permissions from the zip entry's external attributes.
             #[cfg(unix)]
@@ -459,7 +462,7 @@ pub(crate) fn extract(
         }
     }
 
-    Ok(count)
+    Ok((count, bytes_written))
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +611,7 @@ mod tests {
         let token2 = CancelToken::default();
         let mut cb2: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
         let mut ctx2 = make_ctx!(token2, &mut *cb2);
-        let n2 = extract(&zip_path, dest.path(), false, &mut ctx2).expect("extract failed");
+        let (n2, _) = extract(&zip_path, dest.path(), false, &mut ctx2).expect("extract failed");
         assert_eq!(n2, 1);
         assert_eq!(
             std::fs::read(dest.path().join("hello.txt")).unwrap(),
@@ -676,7 +679,7 @@ mod tests {
         buf.into_inner()
     }
 
-    fn extract_malicious(zip_bytes: Vec<u8>, dest: &Path) -> crate::Result<u64> {
+    fn extract_malicious(zip_bytes: Vec<u8>, dest: &Path) -> crate::Result<(u64, u64)> {
         let zip_file = TempDir::new().unwrap();
         let zip_path = zip_file.path().join("malicious.zip");
         std::fs::write(&zip_path, &zip_bytes).unwrap();

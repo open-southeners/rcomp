@@ -765,7 +765,7 @@ pub fn extract(
     };
 
     // --- Dispatch ---
-    let (entries, input_bytes) = do_extract(
+    let (entries, input_bytes, output_bytes) = do_extract(
         input,
         dest,
         format,
@@ -773,8 +773,6 @@ pub fn extract(
         opts.verify_content_sha256.as_deref(),
         &mut ctx,
     )?;
-
-    let output_bytes: u64 = sum_dir_size(dest).unwrap_or(0);
 
     Ok(Report {
         input_bytes,
@@ -789,7 +787,11 @@ pub fn extract(
 
 /// Inner dispatch for extract.
 ///
-/// Returns `(entry_count, input_bytes_consumed)`.
+/// Returns `(entry_count, input_bytes_consumed, output_bytes_written)`.
+/// `output_bytes_written` is the total decompressed/uncompressed byte count
+/// actually written to regular files by this extraction — computed from what
+/// each backend wrote, not by scanning `dest` afterward, so pre-existing
+/// unrelated files under `dest` are never folded in.
 ///
 /// `verify_content_sha256` is the expected content digest (if any).  It is
 /// checked after the stream is fully consumed.  For zip/7z/rar, passing
@@ -815,7 +817,7 @@ fn do_extract(
     overwrite: bool,
     verify_content_sha256: Option<&str>,
     ctx: &mut OpCtx<'_>,
-) -> Result<(u64, u64)> {
+) -> Result<(u64, u64, u64)> {
     match (format.container, format.codec) {
         // RAR container (extract-only; creation is always unsupported).
         //
@@ -824,9 +826,9 @@ fn do_extract(
         #[cfg(feature = "rar")]
         (Some(Container::Rar), None) => {
             ctx.progress.bytes_total = None;
-            let entries = rar::extract(input, dest, overwrite, ctx)?;
+            let (entries, output_bytes) = rar::extract(input, dest, overwrite, ctx)?;
             let input_bytes = fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-            Ok((entries, input_bytes))
+            Ok((entries, input_bytes, output_bytes))
         }
 
         // 7z container.
@@ -836,9 +838,9 @@ fn do_extract(
         // (decompressed) from ever exceeding it.  Consistent with zip.
         (Some(Container::SevenZ), None) => {
             ctx.progress.bytes_total = None;
-            let entries = sevenz::extract(input, dest, overwrite, ctx)?;
+            let (entries, output_bytes) = sevenz::extract(input, dest, overwrite, ctx)?;
             let input_bytes = fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-            Ok((entries, input_bytes))
+            Ok((entries, input_bytes, output_bytes))
         }
 
         // Zip container.
@@ -848,9 +850,9 @@ fn do_extract(
         // (decompressed) from ever exceeding it.
         (Some(Container::Zip), None) => {
             ctx.progress.bytes_total = None;
-            let entries = zip::extract(input, dest, overwrite, ctx)?;
+            let (entries, output_bytes) = zip::extract(input, dest, overwrite, ctx)?;
             let input_bytes = fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-            Ok((entries, input_bytes))
+            Ok((entries, input_bytes, output_bytes))
         }
 
         // Tar container (possibly with a codec).
@@ -889,7 +891,7 @@ fn do_extract(
                 decoded
             };
 
-            let (entries, mut remainder) =
+            let (entries, output_bytes, mut remainder) =
                 tar::extract(reader, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
 
             // Drain any remaining bytes from the reader.  The tar crate stops
@@ -924,7 +926,7 @@ fn do_extract(
                 }
             }
 
-            Ok((entries, compressed))
+            Ok((entries, compressed, output_bytes))
         }
 
         // Codec-only stream.
@@ -963,7 +965,7 @@ fn do_extract(
                     // the hasher — correct, they were already counted.
                     let prefix = Cursor::new(sniff_bytes);
                     let chained: Box<dyn Read + '_> = Box::new(prefix.chain(hashing_decoder));
-                    let (entries, mut remainder) =
+                    let (entries, output_bytes, mut remainder) =
                         tar::extract(chained, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
 
                     // Drain remaining bytes so the HashingReader sees the full
@@ -993,7 +995,7 @@ fn do_extract(
                         }
                     }
 
-                    Ok((entries, compressed))
+                    Ok((entries, compressed, output_bytes))
                 } else {
                     // Single-file decode.
                     let out_name = output_name_for_codec_file(input, codec)?;
@@ -1010,7 +1012,9 @@ fn do_extract(
                     // Write the already-sniffed (already hashed) bytes first,
                     // then copy the rest through the hashing decoder.
                     out_file.write_all(&sniff_bytes)?;
-                    copy_decoder_synced(&mut hashing_decoder, &mut out_file, ctx, &counter)?;
+                    let rest_written =
+                        copy_decoder_synced(&mut hashing_decoder, &mut out_file, ctx, &counter)?;
+                    let output_bytes = sniff_bytes.len() as u64 + rest_written;
 
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
@@ -1028,7 +1032,7 @@ fn do_extract(
                         }
                     }
 
-                    Ok((1, compressed))
+                    Ok((1, compressed, output_bytes))
                 }
             } else {
                 // No content hashing — original path.
@@ -1038,12 +1042,12 @@ fn do_extract(
                 if is_tar {
                     let prefix = Cursor::new(sniff_bytes);
                     let chained: Box<dyn Read + '_> = Box::new(prefix.chain(decoder));
-                    let (entries, _remainder) =
+                    let (entries, output_bytes, _remainder) =
                         tar::extract(chained, dest, overwrite, ctx, Some(Arc::clone(&counter)))?;
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
                     (ctx.on_progress)(&ctx.progress);
-                    Ok((entries, compressed))
+                    Ok((entries, compressed, output_bytes))
                 } else {
                     let out_name = output_name_for_codec_file(input, codec)?;
                     let out_path = dest.join(&out_name);
@@ -1057,12 +1061,14 @@ fn do_extract(
 
                     let mut out_file = fs::File::create(&out_path)?;
                     out_file.write_all(&sniff_bytes)?;
-                    copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
+                    let rest_written =
+                        copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
+                    let output_bytes = sniff_bytes.len() as u64 + rest_written;
 
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
                     (ctx.on_progress)(&ctx.progress);
-                    Ok((1, compressed))
+                    Ok((1, compressed, output_bytes))
                 }
             }
         }
@@ -1206,23 +1212,6 @@ fn scan_input_size(path: &Path) -> Result<u64> {
     }
 }
 
-/// Recursively sum the sizes of all files under a directory.
-///
-/// Used to compute `output_bytes` after extraction.
-fn sum_dir_size(dir: &Path) -> Result<u64> {
-    let mut total: u64 = 0;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        if meta.is_dir() {
-            total = total.saturating_add(sum_dir_size(&entry.path()).unwrap_or(0));
-        } else {
-            total = total.saturating_add(meta.len());
-        }
-    }
-    Ok(total)
-}
-
 /// Copy bytes from `r` to `w` in 64 KiB chunks, checking for cancellation
 /// each iteration and syncing `ctx.progress.bytes_done` from `counter` (the
 /// compressed-bytes [`AtomicCountingReader`] counter) rather than adding the
@@ -1235,9 +1224,10 @@ fn copy_decoder_synced(
     w: &mut dyn Write,
     ctx: &mut OpCtx<'_>,
     counter: &AtomicU64,
-) -> Result<()> {
+) -> Result<u64> {
     const BUF_SIZE: usize = 64 * 1024;
     let mut buf = [0u8; BUF_SIZE];
+    let mut written: u64 = 0;
 
     loop {
         ctx.check_cancel()?;
@@ -1246,10 +1236,11 @@ fn copy_decoder_synced(
             break;
         }
         w.write_all(&buf[..n])?;
+        written += n as u64;
         ctx.progress.bytes_done = counter.load(Ordering::Relaxed);
         (ctx.on_progress)(&ctx.progress);
     }
-    Ok(())
+    Ok(written)
 }
 
 /// Determine the output file name when extracting a codec-only stream as a

@@ -5,28 +5,6 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
-- **Where:** `crates/rcomp-core/src/ops.rs` — `extract()`'s `output_bytes` /
-  `sum_dir_size(dest)` (used by both the CLI and `rcomp-desktop`).
-  **What:** `output_bytes` is computed by recursively summing every file
-  currently under `dest`, not just the entries this operation just wrote.
-  This is only correct when `dest` is a directory created fresh for this
-  extraction (e.g. a wrap subfolder). When the archive has a single top-level
-  root, the silent-tar/wrap rule does *not* wrap it, so `dest` is the
-  destination the user picked, unwrapped and extracted into directly — if
-  that directory already has unrelated files in it (e.g. extracting into
-  `~/Downloads`), their sizes get folded into `output_bytes` too. Reproduced
-  live: extracting a real ~49 KB, 7-entry zip into `~/Downloads` reported
-  `output_bytes` as 5.33 GB (the size of everything else already in
-  Downloads) and a "32518610.9%" ratio in the desktop app's summary view. No
-  data was corrupted or overwritten incorrectly — this is a reporting-only
-  bug in the returned `Report`, not a correctness bug in the extraction
-  itself.
-  **Fix:** Track bytes actually written during extraction (e.g. have each
-  archive backend in `archive/` return a written-byte total alongside the
-  entry count, the way `do_extract`'s entry counter already works) instead of
-  measuring the destination directory after the fact. Affects both `rcomp`
-  CLI output and the desktop app's extract summary.
-
 - **Where:** Release notes / README + `.github/workflows/release.yml` (`desktop` job)
   **What:** The desktop bundles built and attached by the new tag-triggered
   `desktop` job are built with the default `rar` feature on, so they link the
@@ -208,6 +186,22 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 
 ## Resolved
+
+- **Where:** `crates/rcomp-core/src/ops.rs` — `extract()`'s `output_bytes`.
+  **Outcome:** Resolved — `output_bytes` was computed by recursively summing
+  every file currently under `dest` (`sum_dir_size`), which folded in
+  unrelated pre-existing files whenever the archive's single top-level root
+  meant `dest` was not a subfolder created fresh for this extraction (e.g.
+  extracting into `~/Downloads` reported the size of everything else already
+  there — reproduced live as `output_bytes` of 5.33 GB and a "32518610.9%"
+  ratio in the desktop app's summary view for a real ~49 KB, 7-entry zip). No
+  data was ever corrupted or overwritten incorrectly; this was a
+  reporting-only bug. Fixed by having every archive backend (`tar`, `zip`,
+  `sevenz`, `rar`) return the actual bytes it wrote to disk alongside the
+  entry count, and using that in `do_extract`/`extract()` instead of scanning
+  `dest` after the fact. Pinned by
+  `extract_output_bytes_excludes_preexisting_unrelated_files` in
+  `crates/rcomp-core/tests/overwrite.rs`.
 
 - **Where:** `apps/rcomp-desktop/src-tauri/icons/` (placeholder icons)
   **Outcome:** Resolved in M5 — a real 1024×1024 source PNG
