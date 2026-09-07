@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently starts a new archive bundle when the file isn't a supported
   format — it now shows a clear error instead, and always opens a valid
   archive even if a bundle was already in progress.
+- `rcomp-desktop`: the app's process name (Activity Monitor / Task Manager)
+  and its bold macOS menu-bar title now both read "Rcomp" instead of
+  "rcomp-desktop".
 
 ### Removed
 
