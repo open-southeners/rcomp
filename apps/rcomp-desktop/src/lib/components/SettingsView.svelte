@@ -2,27 +2,37 @@
   /**
    * SettingsView — application preferences.
    *
-   * Deliberately minimal: only Appearance is wired to a real, functional
-   * preference today. See `.claude/plans/PLAN_EXTRAS.md` for settings the
-   * design mockup suggested that have no backing feature yet (default codec,
-   * thread count, context-menu integration) — they are left out rather than
-   * shown as non-functional placeholders.
+   * Deliberately minimal: only settings wired to a real, functional
+   * preference belong here. See `.claude/plans/PLAN_EXTRAS.md` for settings
+   * the design mockup suggested that have no backing feature yet (CPU thread
+   * limit, context-menu integration) — they are left out rather than shown
+   * as non-functional placeholders.
    */
+  import { FORMATS } from "../formats";
   import type { Appearance } from "../theme";
 
   interface Props {
     appearance: Appearance;
     onChange: (appearance: Appearance) => void;
+    /** Pinned default compression format, or `null` for "Auto" (smart
+     *  per-content default — see `defaultFormat` in `../formats`). */
+    defaultFormat: string | null;
+    onChangeDefaultFormat: (format: string | null) => void;
     onClose: () => void;
   }
 
-  let { appearance, onChange, onClose }: Props = $props();
+  let { appearance, onChange, defaultFormat, onChangeDefaultFormat, onClose }: Props = $props();
 
   const OPTIONS: { value: Appearance; label: string }[] = [
     { value: "auto", label: "Auto" },
     { value: "light", label: "Light" },
     { value: "dark", label: "Dark" },
   ];
+
+  function handleFormatChange(e: Event): void {
+    const value = (e.currentTarget as HTMLSelectElement).value;
+    onChangeDefaultFormat(value === "" ? null : value);
+  }
 </script>
 
 <div class="settings-view">
@@ -47,6 +57,19 @@
         </button>
       {/each}
     </div>
+  </div>
+
+  <div class="setting-row">
+    <div class="setting-copy">
+      <span class="setting-label">Default Compression Codec</span>
+      <span class="setting-hint">Auto picks by content: a bundle/folder gets .tar.zst, a single file gets .zst.</span>
+    </div>
+    <select class="select-input" value={defaultFormat ?? ""} onchange={handleFormatChange}>
+      <option value="">Auto</option>
+      {#each FORMATS as fmt (fmt.name)}
+        <option value={fmt.name}>{fmt.label}</option>
+      {/each}
+    </select>
   </div>
 </div>
 
@@ -131,6 +154,17 @@
     background: var(--accent);
     color: var(--accent-contrast);
     font-weight: 600;
+  }
+
+  .select-input {
+    flex-shrink: 0;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border-input);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--surface);
+    max-width: 14rem;
   }
 
   .btn-secondary {
