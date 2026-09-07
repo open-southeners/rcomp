@@ -1,6 +1,10 @@
 # rcomp
 
+<img src="apps/rcomp-desktop/src-tauri/icons/icon.png" alt="" align="left" height="64">
+
 One tool for the most popular compression and archive formats.
+
+[![CI](https://github.com/open-southeners/rcomp/actions/workflows/ci.yml/badge.svg)](https://github.com/open-southeners/rcomp/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/rcomp.svg)](https://crates.io/crates/rcomp) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
 
 **`rcomp-core`** is a reusable Rust library (the product). **`rcomp`** is the
 command-line tool, and **Rcomp** is the Tauri desktop app.
