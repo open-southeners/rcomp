@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rcomp-desktop`: the app's process name (Activity Monitor / Task Manager)
   and its bold macOS menu-bar title now both read "Rcomp" instead of
   "rcomp-desktop".
+- `rcomp-desktop`: the macOS app icon's artwork used to fill its canvas
+  edge-to-edge, so the OS's automatic icon masking made it look noticeably
+  larger than other apps' icons in the Dock and Finder. The artwork now sits
+  within the same safe margin other macOS icons use.
 
 ### Removed
 
