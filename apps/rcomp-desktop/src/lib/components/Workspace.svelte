@@ -329,7 +329,6 @@
   <TitleBar
     {mode}
     settingsActive={showSettings}
-    onReset={reset}
     onOpenSettings={() => (showSettings = true)}
   />
 
