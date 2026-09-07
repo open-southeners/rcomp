@@ -19,9 +19,10 @@
     mode: WMode;
     settingsActive: boolean;
     onOpenSettings: () => void;
+    onOpenChangelog: () => void;
   }
 
-  let { mode, settingsActive, onOpenSettings }: Props = $props();
+  let { mode, settingsActive, onOpenSettings, onOpenChangelog }: Props = $props();
 
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -43,7 +44,12 @@
       </svg>
       <div class="name-group">
         <span class="name">rcomp</span>
-        <span class="version">v0.2.0</span>
+        <button
+          class="version"
+          onclick={onOpenChangelog}
+          title="What's New"
+          aria-label="What's New"
+        >v0.2.0</button>
       </div>
     </div>
   </div>
@@ -144,6 +150,17 @@
     border: 1px solid var(--border);
     font-size: 0.7rem;
     font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    /* Opt back into pointer events and out of the drag region — `.brand *`
+       disables both so clicks on the logo/name still drag the window. */
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
+  }
+
+  .version:hover {
+    background: var(--surface-hover);
+    border-color: var(--accent);
   }
 
   .mode-label {
