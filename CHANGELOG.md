@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-08
+
+### Fixed
+
+- `rcomp-desktop`: the macOS universal bundle now statically links `liblzma`
+  in both architecture slices, preventing the ARM64 app from crashing at
+  launch while trying to load Homebrew's `liblzma.5.dylib` under Hardened
+  Runtime. CI now rejects macOS bundles containing absolute references to
+  non-system dynamic libraries.
+
 ## [0.3.1] - 2026-09-08
 
 ### Fixed
@@ -117,7 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release.
 
-[Unreleased]: https://github.com/open-southeners/rcomp/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/open-southeners/rcomp/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/open-southeners/rcomp/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/open-southeners/rcomp/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/open-southeners/rcomp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/open-southeners/rcomp/compare/v0.1.0...v0.2.0
