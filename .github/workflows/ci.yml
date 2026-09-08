@@ -133,9 +133,65 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/rcomp-desktop
         run: bun install
-      - name: Build Tauri bundles
+
+      - name: Verify macOS signing and notarization secrets
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for secret_name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!secret_name}" ]; then
+              missing+=("${secret_name}")
+            fi
+          done
+
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Missing required GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Build, sign, and notarize macOS bundles
+        if: matrix.os == 'macos-latest'
+        working-directory: apps/rcomp-desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bunx tauri build
+
+      - name: Verify macOS bundle signature and Gatekeeper acceptance
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_PATH=$(find target/release/bundle/macos \
+            -maxdepth 1 -type d -name '*.app' -print -quit)
+
+          if [ -z "${APP_PATH}" ]; then
+            echo "::error::Tauri did not produce a macOS app bundle."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+          spctl --assess --type execute --verbose=4 "${APP_PATH}"
+          xcrun stapler validate "${APP_PATH}"
+
+      - name: Build non-macOS Tauri bundles
+        if: matrix.os != 'macos-latest'
         working-directory: apps/rcomp-desktop
         run: bunx tauri build
+
       - name: Upload bundles
         uses: actions/upload-artifact@v4
         with:

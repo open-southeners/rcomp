@@ -269,10 +269,76 @@ jobs:
         working-directory: apps/rcomp-desktop
         run: bun install
 
+      # Never publish an unsigned macOS release by accident. GitHub does not
+      # expose whether a secret exists except through the value injected into a
+      # job, so validate all required signing/notarization inputs before Tauri
+      # starts the expensive universal build.
+      - name: Verify macOS signing and notarization secrets
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for secret_name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!secret_name}" ]; then
+              missing+=("${secret_name}")
+            fi
+          done
+
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Missing required GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+
       # tauri-action runs `beforeBuildCommand` (bun run build) itself, then
       # invokes `tauri build`, picks the correct per-OS artifacts, and uploads
       # them to the GitHub Release identified by `releaseId`.
-      - name: Build and upload Tauri bundles
+      # APPLE_CERTIFICATE is a base64-encoded Developer ID Application .p12;
+      # Tauri imports it and infers the signing identity. The Apple ID,
+      # app-specific password, and team ID are used to notarize and staple the
+      # macOS app before upload.
+      - name: Build, sign, notarize, and upload macOS bundles
+        if: matrix.os == 'macos-latest'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/rcomp-desktop
+          releaseId: ${{ needs.release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      - name: Verify macOS bundle signature and Gatekeeper acceptance
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_PATH=$(find target/universal-apple-darwin/release/bundle/macos \
+            -maxdepth 1 -type d -name '*.app' -print -quit)
+
+          if [ -z "${APP_PATH}" ]; then
+            echo "::error::Tauri did not produce a macOS app bundle."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+          spctl --assess --type execute --verbose=4 "${APP_PATH}"
+          xcrun stapler validate "${APP_PATH}"
+
+      - name: Build and upload non-macOS bundles
+        if: matrix.os != 'macos-latest'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
