@@ -18,7 +18,7 @@ thiserror = "2"
 tempfile = "3"
 flate2 = "1.1.9"
 bzip2 = "0.6.1"
-liblzma = { version = "0.4.6", features = ["parallel"] }
+liblzma = { version = "0.4.6", features = ["parallel", "static"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }
 lz4 = "1.28.1"
 brotli = "8.0.3"
