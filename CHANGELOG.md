@@ -11,115 +11,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `rcomp-desktop`: the macOS universal bundle now statically links `liblzma`
-  in both architecture slices, preventing the ARM64 app from crashing at
-  launch while trying to load Homebrew's `liblzma.5.dylib` under Hardened
-  Runtime. CI now rejects macOS bundles containing absolute references to
-  non-system dynamic libraries.
+- Prevented the ARM64 macOS app from crashing at launch by statically linking
+  `liblzma`.
+- Added CI validation for external dynamic library dependencies in macOS
+  bundles.
 
 ## [0.3.1] - 2026-09-08
 
 ### Fixed
 
-- `rcomp-desktop`: macOS bundles are now signed with a Developer ID
-  Application certificate, notarized by Apple, and validated by Gatekeeper in
-  CI, preventing the “Apple could not verify Rcomp.app is free of malware”
-  warning for downloaded releases.
+- Signed and notarized macOS bundles so Gatekeeper recognizes downloaded
+  releases.
 
 ## [0.3.0] - 2026-09-07
 
 ### Added
 
-- `rcomp-desktop`: a **Settings** screen with an **Appearance** setting
-  (Auto/Light/Dark). Auto follows the OS light/dark preference live, as
-  before; Light/Dark now let you pin a theme regardless of the OS setting.
-- `rcomp-desktop`: Settings also gains a **Default Compression Codec**
-  picker. Auto (the default) picks by content — a folder or multi-item
-  bundle gets `.tar.zst`, a single file gets `.zst` — or you can pin one
-  format for every new archive.
-- `rcomp-desktop`: the macOS **Help** menu now links to the project's
-  repository and the Open Southeners website, and adds a **What's New** item
-  that opens an in-app viewer of this changelog — no need to visit GitHub to
-  see what changed. The version badge in the title bar opens the same viewer,
-  now shows the app's actual running version instead of a hardcoded number,
-  and reads **preview** (in purple) when running a dev build instead of a
-  packaged release.
-- `rcomp-desktop`: the **File** menu (macOS/Windows) gains **New Archive from
-  Files…**, **New Archive from Folder…**, **Open Archive…**, **Extract Now**,
-  **Compress Archive**, and **Close Archive**; **Edit** gains **Find** and
-  **Cancel Job**. Each mirrors an action already available in the workspace
-  UI and is a no-op when it doesn't currently apply.
+- Added appearance settings with Auto, Light, and Dark modes.
+- Added a default compression codec setting. Auto selects `.tar.zst` for
+  folders or multi-item bundles and `.zst` for single files.
+- Added an in-app changelog viewer, available from the Help menu and version
+  badge, along with links to the project website and repository.
+- Added File and Edit menu commands for common archive operations, search, and
+  job cancellation.
 
 ### Changed
 
-- `rcomp-desktop`: extracting an opened archive no longer uses a side panel —
-  a bar above the file list shows the archive's format/codec, whether a
-  `.sha256` sidecar is available to verify against, and the space saved, plus
-  a destination field (editable, or **Choose…** for the native picker) and an
-  **Extract Now** button. Multi-root archives are still wrapped into a
-  subfolder automatically, matching the CLI. The file list's status bar shows
-  the archive's original and on-disk size and its file size (averaged, for
-  more than one file), next to a search box for filtering entries by name
-  and the archive's path.
-- `rcomp-desktop`: reworked the compose sidebar to match the app's design —
-  the format picker is now a container button-grid (None/TAR/ZIP/7-Zip) with
-  a separate compression-algorithm dropdown, disabled with a hint when the
-  container manages its own compression (ZIP, 7-Zip); the Fast/Best/Edge
-  level picker is now a 3-stop slider. The file list also gains its own
-  **Add Files** button and a drag & drop hint for building a bundle.
-- `rcomp-desktop`: replaced the plain OS title bar (macOS) with a branded one
-  showing the app icon, name, and version, with a divider separating it from
-  the native traffic lights, while keeping the native close/minimize/zoom
-  controls. The bar remains draggable, same as the native title bar it
-  replaces.
-- `rcomp-desktop`: refreshed the app icon artwork.
+- Redesigned the extraction view with inline destination controls, archive
+  details, checksum status, and file search.
+- Redesigned the compose sidebar with container buttons, a separate codec
+  selector, a compression-level slider, and clearer file controls.
+- Added a branded macOS title bar while retaining the native window controls.
+- Refreshed the app icon.
 
 ### Fixed
 
-- Extracting an archive whose contents don't get wrapped in a subfolder (a
-  single-root archive extracted straight into an existing, non-empty
-  destination) no longer reports a wildly inflated extracted size — the
-  reported `output_bytes` used to include every unrelated file already
-  sitting in the destination folder. Affects both the `rcomp` CLI summary and
-  `rcomp-desktop`'s extraction summary.
-- `rcomp-desktop`: dragging the title bar no longer scrolls the whole window
-  out of view — only the file list and compose sidebar scroll, as intended.
-- `rcomp-desktop`: opening a file from outside the app (double-click, "Open
-  With…", or handing a file to an already-running instance) no longer
-  silently starts a new archive bundle when the file isn't a supported
-  format — it now shows a clear error instead, and always opens a valid
-  archive even if a bundle was already in progress.
-- `rcomp-desktop`: the app's process name (Activity Monitor / Task Manager)
-  and its bold macOS menu-bar title now both read "Rcomp" instead of
-  "rcomp-desktop".
-- `rcomp-desktop`: the macOS app icon's artwork used to fill its canvas
-  edge-to-edge, so the OS's automatic icon masking made it look noticeably
-  larger than other apps' icons in the Dock and Finder. The artwork now sits
-  within the same safe margin other macOS icons use.
+- Corrected extracted-size reporting for single-root archives written into
+  existing directories.
+- Prevented title bar dragging from scrolling the window content.
+- Fixed files opened from Finder or another application being treated as new
+  archive inputs instead of archives to extract.
+- Corrected the process and macOS menu-bar name to “Rcomp”.
+- Corrected macOS app icon sizing in the Dock and Finder.
 
 ### Removed
 
-- `rcomp-desktop`: removed the title bar's **New** button. It reset the
-  workspace without cancelling or warning about an in-progress compress or
-  extract job, so a stray click mid-operation could lose work; use **New
-  operation** on the completion screen once a job finishes, or start a fresh
-  operation from an empty workspace instead.
+- Removed the title bar's New button because it could discard an active
+  operation.
 
 ## [0.2.0] - 2026-06-15
 
 ### Added
 
-- `rcomp-desktop`: a cross-platform Tauri desktop app, the second consumer of
-  `rcomp-core` alongside the CLI.
-- Release CI now builds and attaches the desktop app bundles for Windows, macOS
-  (universal), and Linux to each tagged GitHub Release. Bundles are currently
-  unsigned.
+- Added a cross-platform Tauri desktop app for Windows, macOS, and Linux.
+- Added desktop bundles to tagged GitHub releases.
 
 ### Changed
 
-- The desktop bundle version now inherits the workspace version instead of being
-  hardcoded, so `rcomp-core`, `rcomp`, and `rcomp-desktop` all release under one
-  version.
+- Unified the library, CLI, and desktop app version numbers.
 
 ## [0.1.0] - 2026-06-12
 
