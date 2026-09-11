@@ -68,7 +68,22 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.release-notes }}
+          # Appends a fixed legend below the changelog notes so every release
+          # explains, once and for all, what its assets are: the desktop job
+          # names its uploads `rcomp-desktop_<version>_<platform>-<arch>.<ext>`,
+          # and the CLI is intentionally not a binary asset here (crates.io).
+          body: |
+            ${{ steps.changelog.outputs.release-notes }}
+
+            ---
+
+            ### About the assets below
+
+            - `rcomp-desktop_*` files are the **Rcomp desktop app** (GUI) —
+              pick the one matching your platform/architecture, e.g.
+              `rcomp-desktop_${{ steps.version.outputs.version }}_macos-universal.dmg`.
+            - The **`rcomp` command-line tool** is lowercase and is not shipped
+              as a binary here — install it with `cargo install rcomp`.
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
 
@@ -224,12 +239,22 @@ jobs:
       matrix:
         include:
           # Universal binary for macOS — one DMG for Intel + Apple Silicon.
+          # `platform`/`arch` feed the asset-renaming step below, so every
+          # uploaded file self-describes its OS, CPU architecture, and that
+          # it's the desktop app (as opposed to the `rcomp` CLI, which is only
+          # published to crates.io — see the release body legend).
           - os: macos-latest
             args: "--target universal-apple-darwin"
+            platform: macos
+            arch: universal
           - os: ubuntu-latest
             args: ""
+            platform: linux
+            arch: x86_64
           - os: windows-latest
             args: ""
+            platform: windows
+            arch: x86_64
 
     steps:
       - name: Checkout
@@ -347,3 +372,45 @@ jobs:
           projectPath: apps/rcomp-desktop
           releaseId: ${{ needs.release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+      # tauri-action names uploads after `productName` alone (e.g.
+      # `Rcomp_0.3.2_amd64.deb`), with no indication it's the GUI app rather
+      # than the `rcomp` CLI, nor which CPU architecture it targets. Rename
+      # each asset in place via the API (no re-upload of the binary) to
+      # `rcomp-desktop_<version>_<platform>-<arch>.<ext>` once uploaded.
+      - name: Rename release assets for clarity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.release.outputs.version }}"
+          TAG="${{ github.ref_name }}"
+          PLATFORM="${{ matrix.platform }}"
+          ARCH="${{ matrix.arch }}"
+
+          rename_asset() {
+            local suffix="$1" new_name="$2" id
+            id=$(gh api "repos/{owner}/{repo}/releases/tags/${TAG}" \
+              --jq ".assets[] | select(.name | endswith(\"${suffix}\")) | .id" | head -n1)
+            if [ -n "${id}" ]; then
+              echo "Renaming asset ${id} -> ${new_name}"
+              gh api -X PATCH "repos/{owner}/{repo}/releases/assets/${id}" -f "name=${new_name}"
+            else
+              echo "No uploaded asset ending in ${suffix} found — skipping."
+            fi
+          }
+
+          case "${PLATFORM}" in
+            linux)
+              rename_asset ".deb" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}.deb"
+              rename_asset ".AppImage" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}.AppImage"
+              ;;
+            macos)
+              rename_asset ".dmg" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}.dmg"
+              ;;
+            windows)
+              rename_asset ".msi" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}.msi"
+              rename_asset "-setup.exe" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}-setup.exe"
+              ;;
+          esac

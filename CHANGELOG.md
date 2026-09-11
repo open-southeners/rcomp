@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.3] - 2026-09-11
 
+### Changed
+
+- GitHub release assets for the desktop app are now named
+  `rcomp-desktop_<version>_<platform>-<arch>.<ext>` (e.g.
+  `rcomp-desktop_0.3.2_macos-universal.dmg`), and the release notes now spell
+  out which files are the desktop app versus the `rcomp` CLI (installed via
+  `cargo install rcomp`, not distributed as a release binary).
+
 ### Fixed
 
 - The desktop app no longer crashes with a raw GTK panic when launched on
