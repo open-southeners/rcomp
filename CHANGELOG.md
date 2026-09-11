@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-11
+
+### Fixed
+
+- The desktop app no longer crashes with a raw GTK panic when launched on
+  Linux with no graphical session (e.g. over SSH on a headless server); it
+  now prints a clear error and exits instead.
+
 ## [0.3.2] - 2026-09-08
 
 ### Fixed

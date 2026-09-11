@@ -8,6 +8,27 @@ pub mod progress;
 
 use tauri::Manager as _;
 
+/// Bails out with a clean message instead of letting `tao` panic with a raw
+/// GTK `BoolError` when there is no X11/Wayland session (e.g. an SSH session
+/// on a headless server) — `gtk::init` fails deep inside the event loop
+/// constructor with no recoverable `Result` to catch.
+#[cfg(target_os = "linux")]
+fn ensure_display_available() {
+    let has_display =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+    if !has_display {
+        eprintln!(
+            "rcomp: no graphical display found (DISPLAY and WAYLAND_DISPLAY are both unset)."
+        );
+        eprintln!(
+            "This is the Rcomp desktop app, which needs an X11 or Wayland session — not the `rcomp` command-line tool."
+        );
+        eprintln!("Looking for the CLI instead? Install it with: cargo install rcomp");
+        std::process::exit(1);
+    }
+}
+
 /// Entry point for the Tauri application.
 ///
 /// Builds the Tauri app instance, registers managed state (the [`job::JobRegistry`]
@@ -17,6 +38,9 @@ use tauri::Manager as _;
 /// handling macOS `Opened` file events.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    ensure_display_available();
+
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
         .manage(job::JobRegistry::default())
