@@ -1,6 +1,6 @@
 //! `rcomp` CLI entry point.
 //!
-//! Parses arguments with [`Cli`], dispatches to [`run::run`], and maps
+//! Parses arguments with `Cli`, dispatches to [`run::run`], and maps
 //! the result to an exit code:
 //!
 //! - **0** — success

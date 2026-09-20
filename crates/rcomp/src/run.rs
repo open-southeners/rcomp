@@ -15,8 +15,9 @@ use std::{
 use anyhow::{Context, bail};
 use indicatif::HumanBytes;
 use rcomp_core::{
-    CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report, compress,
-    detect, distinct_roots, extract, format_sidecar, list, split_format_suffix, wrap_dir_name,
+    CancelToken, CompressOptions, Engine, Error as CoreError, ExtractOptions, Format,
+    ProviderRegistry, Report, detect, distinct_roots, format_sidecar, list, split_format_suffix,
+    wrap_dir_name,
 };
 
 use crate::cli::{Cli, SubCommand};
@@ -57,7 +58,7 @@ impl std::error::Error for UsageError {}
 /// through [`CoreError::Cancelled`] (cleaning up partial output).
 ///
 /// Returns `Ok(())` on success or an `anyhow::Error` whose root cause may be
-/// [`CoreError`] or [`AmbiguityError`].  `main.rs` maps the error to the
+/// [`CoreError`] or an inference ambiguity. `main.rs` maps the error to the
 /// appropriate exit code.
 pub fn run(cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     // Subcommands bypass the inference path entirely.
@@ -177,12 +178,13 @@ fn cmd_compress(
         overwrite: cli.force,
         cancel,
         checksum: cli.checksum,
+        acceleration: cli.accelerator,
         follow_gitignore: !cli.all,
         exclude: cli.exclude.clone(),
     };
 
     let mut prog = ui::build(cli.quiet);
-    let result = compress(input, output, &opts, |p| (prog.callback)(p));
+    let result = operation_engine().compress(input, output, &opts, |p| (prog.callback)(p));
 
     // On cancellation: abandon the bar so the terminal is not left corrupted,
     // then print a dedicated "cancelled" line to stderr and exit 1.
@@ -205,6 +207,7 @@ fn cmd_compress(
 
     let report = result.map_err(|e| map_core_error(e, "compress"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
+    print_acceleration_notice(&report, cli.quiet);
 
     // Write the sidecar when --checksum was requested.
     if let Some(ref artifact_hex) = report.sha256 {
@@ -356,10 +359,11 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
         cancel,
         verify_sha256,
         verify_content_sha256,
+        acceleration: cli.accelerator,
     };
 
     let mut prog = ui::build(cli.quiet);
-    let result = extract(input, &effective_dest, &opts, |p| (prog.callback)(p));
+    let result = operation_engine().extract(input, &effective_dest, &opts, |p| (prog.callback)(p));
 
     // On cancellation: abandon the bar so the terminal is not left corrupted,
     // then print a dedicated "cancelled" line to stderr and exit 1.
@@ -383,6 +387,7 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
 
     let report = result.map_err(|e| map_core_error(e, "extract"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
+    print_acceleration_notice(&report, cli.quiet);
 
     // Print verification note to stderr when a sidecar was used (not under -q).
     if has_sidecar && !cli.quiet {
@@ -432,6 +437,21 @@ fn cmd_ls(archive: &Path, quiet: bool) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn operation_engine() -> Engine {
+    let providers = ProviderRegistry::new();
+
+    #[cfg(all(target_os = "macos", feature = "metal"))]
+    let providers = {
+        let mut providers = providers;
+        if let Ok(provider) = rcomp_metal::MetalProvider::new() {
+            providers.register(std::sync::Arc::new(provider));
+        }
+        providers
+    };
+
+    Engine::with_registry(providers)
+}
 
 /// Write a `sha256sum`-compatible sidecar file at `sidecar_path`.
 ///
@@ -563,6 +583,13 @@ fn map_core_error(e: CoreError, operation: &str) -> anyhow::Error {
         CoreError::AlreadyExists { ref path } => {
             anyhow::anyhow!("{e}\nhint: use --force to overwrite `{}`", path.display())
         }
+        CoreError::AccelerationUnavailable { .. } => anyhow::anyhow!("{operation} failed: {e}"),
         other => anyhow::anyhow!("{other}").context(format!("{operation} failed")),
+    }
+}
+
+fn print_acceleration_notice(report: &Report, quiet: bool) {
+    if !quiet && let Some(notice) = &report.acceleration_notice {
+        eprintln!("warning: {notice}");
     }
 }
