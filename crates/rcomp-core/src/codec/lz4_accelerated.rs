@@ -6,7 +6,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::{BlockEncoderSession, Error, Result, codec::Encoder};
+use crate::{BlockEncoderSession, CancelToken, Error, Result, codec::Encoder};
 
 const MAX_BATCH_BYTES: usize = 1024 * 1024 * 1024;
 const MAX_IN_FLIGHT_BATCHES: usize = 2;
@@ -14,6 +14,7 @@ const MAX_IN_FLIGHT_BATCHES: usize = 2;
 pub(crate) fn encoder<'a>(
     session: Box<dyn BlockEncoderSession>,
     mut writer: Box<dyn Write + 'a>,
+    cancel: CancelToken,
 ) -> Result<Box<dyn Encoder + 'a>> {
     let block_size = session.block_size();
     if block_size == 0 {
@@ -51,14 +52,19 @@ pub(crate) fn encoder<'a>(
 
     let (input_sender, input_receiver) = mpsc::sync_channel::<Vec<u8>>(MAX_IN_FLIGHT_BATCHES - 1);
     let (result_sender, result_receiver) = mpsc::channel::<Result<EncodedBatch>>();
+    let worker_cancel = cancel.clone();
     let worker = thread::Builder::new()
         .name("rcomp-lz4-accelerator".to_owned())
         .spawn(move || {
             let mut session = session;
             while let Ok(input) = input_receiver.recv() {
-                let result = session
-                    .compress_blocks(&input)
-                    .map(|blocks| EncodedBatch { input, blocks });
+                let result = if worker_cancel.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    session
+                        .compress_blocks(&input, &worker_cancel)
+                        .map(|blocks| EncodedBatch { input, blocks })
+                };
                 let failed = result.is_err();
                 if result_sender.send(result).is_err() || failed {
                     break;
@@ -75,6 +81,7 @@ pub(crate) fn encoder<'a>(
         result_receiver,
         worker: Some(worker),
         in_flight: 0,
+        cancel,
     }))
 }
 
@@ -92,10 +99,20 @@ struct AcceleratedLz4Encoder<'a> {
     result_receiver: Receiver<Result<EncodedBatch>>,
     worker: Option<JoinHandle<()>>,
     in_flight: usize,
+    cancel: CancelToken,
 }
 
 impl AcceleratedLz4Encoder<'_> {
+    fn check_cancel(&self) -> Result<()> {
+        if self.cancel.is_cancelled() {
+            Err(Error::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
     fn submit_batch(&mut self) -> Result<()> {
+        self.check_cancel()?;
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -115,11 +132,14 @@ impl AcceleratedLz4Encoder<'_> {
     }
 
     fn write_next_batch(&mut self) -> Result<()> {
-        let mut batch = self
+        self.check_cancel()?;
+        let result = self
             .result_receiver
             .recv()
-            .map_err(|_| bridge_failure("accelerator worker stopped before returning a batch"))??;
+            .map_err(|_| bridge_failure("accelerator worker stopped before returning a batch"))?;
         self.in_flight = self.in_flight.saturating_sub(1);
+        let mut batch = result?;
+        self.check_cancel()?;
 
         let expected_count = batch.input.len().div_ceil(self.block_size);
         let blocks = &batch.blocks;
@@ -134,6 +154,7 @@ impl AcceleratedLz4Encoder<'_> {
         }
 
         for (index, block) in blocks.iter().enumerate() {
+            self.check_cancel()?;
             let input_start = index * self.block_size;
             let input_end = (input_start + self.block_size).min(batch.input.len());
             let input = &batch.input[input_start..input_end];
@@ -154,14 +175,18 @@ impl AcceleratedLz4Encoder<'_> {
                         provider: "registered provider".to_owned(),
                         reason: format!("LZ4 block {index} is too large to frame"),
                     })?;
+                self.check_cancel()?;
                 self.writer.write_all(&size.to_le_bytes())?;
+                self.check_cancel()?;
                 self.writer.write_all(&block.bytes)?;
             } else {
                 let size = u32::try_from(input.len()).map_err(|_| Error::AccelerationFailed {
                     provider: "registered provider".to_owned(),
                     reason: format!("stored LZ4 block {index} is too large to frame"),
                 })? | 0x8000_0000;
+                self.check_cancel()?;
                 self.writer.write_all(&size.to_le_bytes())?;
+                self.check_cancel()?;
                 self.writer.write_all(input)?;
             }
         }
@@ -196,10 +221,21 @@ impl AcceleratedLz4Encoder<'_> {
     }
 }
 
+impl Drop for AcceleratedLz4Encoder<'_> {
+    fn drop(&mut self) {
+        // Closing the queue prevents new submissions. Joining guarantees the
+        // provider session and its native buffers stay alive until any active
+        // device work has completed or cancelled safely.
+        let _ = self.close_worker();
+    }
+}
+
 impl Write for AcceleratedLz4Encoder<'_> {
     fn write(&mut self, mut input: &[u8]) -> io::Result<usize> {
+        self.check_cancel().map_err(io::Error::other)?;
         let original_length = input.len();
         while !input.is_empty() {
+            self.check_cancel().map_err(io::Error::other)?;
             let available = self.batch_capacity - self.pending.len();
             let consumed = available.min(input.len());
             self.pending.extend_from_slice(&input[..consumed]);
@@ -212,18 +248,22 @@ impl Write for AcceleratedLz4Encoder<'_> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.check_cancel().map_err(io::Error::other)?;
         self.submit_batch().map_err(io::Error::other)?;
         self.drain_pipeline().map_err(io::Error::other)?;
+        self.check_cancel().map_err(io::Error::other)?;
         self.writer.flush()
     }
 }
 
 impl Encoder for AcceleratedLz4Encoder<'_> {
     fn finish(mut self: Box<Self>) -> Result<()> {
+        self.check_cancel()?;
         self.submit_batch()?;
         self.input_sender.take();
         self.drain_pipeline()?;
         self.close_worker()?;
+        self.check_cancel()?;
         self.writer.write_all(&0_u32.to_le_bytes())?;
         self.writer.flush()?;
         Ok(())
@@ -314,7 +354,14 @@ fn read_u32(input: &[u8], offset: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        time::Duration,
+    };
 
     use super::*;
     use crate::CompressedBlock;
@@ -326,7 +373,11 @@ mod tests {
             65_536
         }
 
-        fn compress_blocks(&mut self, input: &[u8]) -> Result<Vec<CompressedBlock>> {
+        fn compress_blocks(
+            &mut self,
+            input: &[u8],
+            _cancel: &CancelToken,
+        ) -> Result<Vec<CompressedBlock>> {
             Ok(input
                 .chunks(self.block_size())
                 .map(|chunk| CompressedBlock {
@@ -350,7 +401,11 @@ mod tests {
             2 * self.block_size()
         }
 
-        fn compress_blocks(&mut self, input: &[u8]) -> Result<Vec<CompressedBlock>> {
+        fn compress_blocks(
+            &mut self,
+            input: &[u8],
+            _cancel: &CancelToken,
+        ) -> Result<Vec<CompressedBlock>> {
             self.calls.lock().unwrap().push(input.len());
             Ok(input
                 .chunks(self.block_size())
@@ -359,6 +414,34 @@ mod tests {
                     bytes: vec![0; chunk.len()],
                 })
                 .collect())
+        }
+    }
+
+    struct CancellationSession {
+        started: mpsc::SyncSender<()>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl BlockEncoderSession for CancellationSession {
+        fn block_size(&self) -> usize {
+            65_536
+        }
+
+        fn preferred_batch_size(&self) -> usize {
+            self.block_size()
+        }
+
+        fn compress_blocks(
+            &mut self,
+            _input: &[u8],
+            cancel: &CancelToken,
+        ) -> Result<Vec<CompressedBlock>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let _ = self.started.send(());
+            while !cancel.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(Error::Cancelled)
         }
     }
 
@@ -375,7 +458,12 @@ mod tests {
     fn bridge_writes_a_decodable_stored_block_frame() {
         let mut output = Vec::new();
         {
-            let mut encoder = encoder(Box::new(StoredSession), Box::new(&mut output)).unwrap();
+            let mut encoder = encoder(
+                Box::new(StoredSession),
+                Box::new(&mut output),
+                CancelToken::default(),
+            )
+            .unwrap();
             encoder.write_all(b"accelerated bridge").unwrap();
             encoder.finish().unwrap();
         }
@@ -395,7 +483,12 @@ mod tests {
         let input = vec![b'x'; 5 * 65_536 + 17];
         let mut output = Vec::new();
         {
-            let mut encoder = encoder(Box::new(session), Box::new(&mut output)).unwrap();
+            let mut encoder = encoder(
+                Box::new(session),
+                Box::new(&mut output),
+                CancelToken::default(),
+            )
+            .unwrap();
             encoder.write_all(&input).unwrap();
             encoder.finish().unwrap();
         }
@@ -405,5 +498,70 @@ mod tests {
         let mut decoded = Vec::new();
         std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
         assert_eq!(decoded, input);
+    }
+
+    #[test]
+    fn cancellation_reaches_an_active_provider_and_discards_its_output() {
+        let cancel = CancelToken::default();
+        let worker_cancel = cancel.clone();
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let session = CancellationSession {
+            started: started_tx,
+            calls: Arc::clone(&calls),
+        };
+
+        let operation = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let mut encoder = encoder(Box::new(session), Box::new(&mut output), worker_cancel)?;
+            encoder.write_all(&vec![b'x'; 65_536])?;
+            encoder.finish()
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("provider should begin its first batch");
+        cancel.cancel();
+
+        let result = operation.join().expect("bridge thread should not panic");
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cancellation_stops_queued_batches_before_provider_submission() {
+        let cancel = CancelToken::default();
+        let worker_cancel = cancel.clone();
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let session = CancellationSession {
+            started: started_tx,
+            calls: Arc::clone(&calls),
+        };
+
+        let operation = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let mut encoder = encoder(
+                Box::new(session),
+                Box::new(&mut output),
+                worker_cancel.clone(),
+            )?;
+            let result = encoder.write_all(&vec![b'x'; 2 * 65_536]);
+            drop(encoder);
+            match result {
+                Err(_) if worker_cancel.is_cancelled() => Err(Error::Cancelled),
+                Err(error) => Err(Error::Io(error)),
+                Ok(()) => Ok(()),
+            }
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("provider should begin its first batch");
+        cancel.cancel();
+
+        let result = operation.join().expect("bridge thread should not panic");
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

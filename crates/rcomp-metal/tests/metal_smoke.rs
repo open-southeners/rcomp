@@ -83,19 +83,20 @@ fn metal_provider_registers_and_opens_a_persistent_block_session() {
     let mut session = provider
         .open_block_encoder(&request)
         .expect("the exact experimental capability should open");
+    let cancel = rcomp_core::CancelToken::default();
     let input = vec![b'a'; 2 * session.block_size() + 17];
     let first = session
-        .compress_blocks(&input)
+        .compress_blocks(&input, &cancel)
         .expect("first batch should compress");
     let second = session
-        .compress_blocks(&input[..session.block_size()])
+        .compress_blocks(&input[..session.block_size()], &cancel)
         .expect("the compiled session should be reusable");
     drop(session);
     let mut second_session = provider
         .open_block_encoder(&request)
         .expect("a second session should reuse the immutable Metal context");
     let from_second_session = second_session
-        .compress_blocks(&input[..second_session.block_size()])
+        .compress_blocks(&input[..second_session.block_size()], &cancel)
         .expect("the second session should execute independently");
 
     assert_eq!(first.len(), 3);

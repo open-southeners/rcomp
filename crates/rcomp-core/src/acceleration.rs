@@ -8,7 +8,7 @@
 
 use std::{fmt, str::FromStr, sync::Arc};
 
-use crate::{Codec, Error, Format, Level, Result};
+use crate::{CancelToken, Codec, Error, Format, Level, Result};
 
 /// User preference for hardware acceleration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -196,9 +196,16 @@ pub trait BlockEncoderSession: Send {
     ///
     /// # Errors
     ///
-    /// Returns an acceleration error when the provider rejects the input,
-    /// loses the device, or produces invalid output metadata.
-    fn compress_blocks(&mut self, input: &[u8]) -> Result<Vec<CompressedBlock>>;
+    /// Returns [`Error::Cancelled`] when cancellation is observed. A provider
+    /// that cannot abort active device work must wait for that work to become
+    /// safe to release, discard its result, and then return cancellation.
+    /// Other acceleration errors cover rejected input, device loss, and
+    /// invalid output metadata.
+    fn compress_blocks(
+        &mut self,
+        input: &[u8],
+        cancel: &CancelToken,
+    ) -> Result<Vec<CompressedBlock>>;
 }
 
 /// Safe, vendor-neutral interface implemented by native accelerator crates.

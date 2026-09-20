@@ -140,8 +140,24 @@ impl BlockEncoderSession for MetalBlockEncoder {
         self.0.preferred_batch_size()
     }
 
-    fn compress_blocks(&mut self, input: &[u8]) -> rcomp_core::Result<Vec<CompressedBlock>> {
-        self.0.compress_blocks(input).map_err(core_failure)
+    fn compress_blocks(
+        &mut self,
+        input: &[u8],
+        cancel: &rcomp_core::CancelToken,
+    ) -> rcomp_core::Result<Vec<CompressedBlock>> {
+        if cancel.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let blocks = self.0.compress_blocks(input).map_err(core_failure)?;
+        // Metal command buffers cannot be cancelled after commit. The native
+        // call waits synchronously so all retained resources remain alive,
+        // then this check discards completed output when cancellation arrived
+        // during execution.
+        if cancel.is_cancelled() {
+            Err(CoreError::Cancelled)
+        } else {
+            Ok(blocks)
+        }
     }
 }
 

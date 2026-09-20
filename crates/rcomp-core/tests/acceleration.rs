@@ -18,7 +18,11 @@ impl BlockEncoderSession for StoredBlockSession {
         65_536
     }
 
-    fn compress_blocks(&mut self, input: &[u8]) -> rcomp_core::Result<Vec<CompressedBlock>> {
+    fn compress_blocks(
+        &mut self,
+        input: &[u8],
+        _cancel: &rcomp_core::CancelToken,
+    ) -> rcomp_core::Result<Vec<CompressedBlock>> {
         Ok(input
             .chunks(self.block_size())
             .map(|chunk| CompressedBlock {
