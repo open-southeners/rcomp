@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added shared hardware-acceleration selection for the core, CLI, and desktop
+  app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop
+  users can choose Automatic, CPU only, or Require GPU in Settings. Automatic
+  mode reports CPU fallback, while required mode fails clearly when no
+  compatible provider is available.
+- Added an opt-in `rcomp-metal` provider and safe core provider registry. The
+  first experimental capability produces interoperable LZ4 Fast and tar.lz4
+  frames on Apple Silicon when the CLI or Tauri backend is built with
+  `--features metal` and GPU use is explicitly required. Reusable buffers and
+  device-aware bounded batches, a two-batch overlap pipeline, cached native
+  state, and payload-only host copies substantially reduce dispatch overhead.
+  It remains excluded from automatic selection until crossover measurements
+  exist across representative Apple Silicon devices.
+
 ## [0.3.3] - 2026-09-11
 
 ### Changed
