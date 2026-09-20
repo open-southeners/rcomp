@@ -5,7 +5,7 @@
 
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::Shell;
-use rcomp_core::{Format, Level};
+use rcomp_core::{AccelerationPreference, Format, Level};
 
 /// Unified compression and archive tool.
 ///
@@ -56,6 +56,18 @@ pub struct Cli {
     /// Use maximum compression (highest ratio, hardware expensive).
     #[arg(long, group = "level_group")]
     pub edge: bool,
+
+    /// Hardware acceleration mode: auto, cpu, or required.
+    ///
+    /// The command-line value overrides RCOMP_ACCELERATOR. `auto` falls back
+    /// to CPU with a warning; `required` fails if no compatible device exists.
+    #[arg(
+        long,
+        env = "RCOMP_ACCELERATOR",
+        default_value = "cpu",
+        value_name = "MODE"
+    )]
+    pub accelerator: AccelerationPreference,
 
     /// Force compress mode (overrides inference).
     #[arg(short = 'c', long, conflicts_with = "extract")]
@@ -160,8 +172,10 @@ pub enum SubCommand {
     Man,
 }
 
-/// Value parser for `--algo`: calls [`Format::from_str`] and maps a
+/// Value parser for `--algo`: parses a [`Format`] through [`FromStr`] and maps a
 /// core `Error` to a `String` so clap can produce a usage error (exit 2).
+///
+/// [`FromStr`]: std::str::FromStr
 fn parse_format(s: &str) -> Result<Format, String> {
     s.parse::<Format>().map_err(|e| e.to_string())
 }
