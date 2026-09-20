@@ -52,9 +52,10 @@ use std::{
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    Codec, Container, Error, Format, Level, Result,
+    AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
+    ProviderRegistry, Result, acceleration,
     archive::{OpCtx, sevenz, tar, zip},
-    codec::{Encoder, new_decoder, new_encoder},
+    codec::{Encoder, lz4_accelerated, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
     progress::{CancelToken, Entry, Progress, Report, copy_with_progress},
@@ -67,6 +68,76 @@ use crate::archive::rar;
 // ---------------------------------------------------------------------------
 // Public option structs
 // ---------------------------------------------------------------------------
+
+/// Configured rcomp operation engine.
+///
+/// Free functions such as [`compress`] use a CPU-only engine. Applications
+/// that compile optional native provider crates can register them here without
+/// making `rcomp-core` depend on Metal, CUDA, or ROCm.
+#[derive(Clone, Default)]
+pub struct Engine {
+    providers: ProviderRegistry,
+}
+
+impl Engine {
+    /// Create a CPU-only engine with no registered accelerator providers.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create an engine using an application-supplied provider registry.
+    #[must_use]
+    pub fn with_registry(providers: ProviderRegistry) -> Self {
+        Self { providers }
+    }
+
+    /// Return the provider registry used by this engine.
+    #[must_use]
+    pub fn providers(&self) -> &ProviderRegistry {
+        &self.providers
+    }
+
+    /// Compress one input using this engine's registered providers.
+    pub fn compress(
+        &self,
+        input: &Path,
+        output: &Path,
+        opts: &CompressOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_compress(
+            &self.providers,
+            std::slice::from_ref(&input.to_path_buf()),
+            output,
+            opts,
+            false,
+            on_progress,
+        )
+    }
+
+    /// Compress multiple inputs into one archive using registered providers.
+    pub fn compress_many(
+        &self,
+        inputs: &[PathBuf],
+        output: &Path,
+        opts: &CompressOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_compress(&self.providers, inputs, output, opts, true, on_progress)
+    }
+
+    /// Extract one input using this engine's registered providers.
+    pub fn extract(
+        &self,
+        input: &Path,
+        dest: &Path,
+        opts: &ExtractOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_extract(&self.providers, input, dest, opts, on_progress)
+    }
+}
 
 /// Options for a [`compress`] operation.
 ///
@@ -116,6 +187,8 @@ pub struct CompressOptions {
     ///
     /// Digest computation is streaming — no extra read pass is performed.
     pub checksum: bool,
+    /// Hardware-acceleration preference. Defaults to explicit CPU operation.
+    pub acceleration: AccelerationPreference,
 }
 
 impl Default for CompressOptions {
@@ -130,6 +203,7 @@ impl Default for CompressOptions {
             follow_gitignore: true,
             exclude: Vec::new(),
             checksum: false,
+            acceleration: AccelerationPreference::default(),
         }
     }
 }
@@ -171,6 +245,8 @@ pub struct ExtractOptions {
     /// is always [`Error::UnsupportedOperation`] — those formats compress
     /// entries individually with no canonical content stream.
     pub verify_content_sha256: Option<String>,
+    /// Hardware-acceleration preference. Defaults to explicit CPU operation.
+    pub acceleration: AccelerationPreference,
 }
 
 // ---------------------------------------------------------------------------
@@ -210,13 +286,7 @@ pub fn compress(
     opts: &CompressOptions,
     on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
-    run_compress(
-        std::slice::from_ref(&input.to_path_buf()),
-        output,
-        opts,
-        false,
-        on_progress,
-    )
+    Engine::new().compress(input, output, opts, on_progress)
 }
 
 /// Compress one or more inputs into a **single** archive at `output`.
@@ -254,7 +324,7 @@ pub fn compress_many(
     opts: &CompressOptions,
     on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
-    run_compress(inputs, output, opts, true, on_progress)
+    Engine::new().compress_many(inputs, output, opts, on_progress)
 }
 
 /// Shared implementation behind [`compress`] and [`compress_many`].
@@ -266,6 +336,7 @@ pub fn compress_many(
 /// - `true` ([`compress_many`]) — each input's final path component is
 ///   preserved as a top-level root via [`collect_many`].
 fn run_compress(
+    providers: &ProviderRegistry,
     inputs: &[PathBuf],
     output: &Path,
     opts: &CompressOptions,
@@ -324,6 +395,16 @@ fn run_compress(
             operation: "compress".into(),
         });
     }
+
+    // Resolve acceleration only after the effective format (including the
+    // silent-tar promotion) is known, so provider matching is format-aware.
+    let acceleration = acceleration::select(
+        providers,
+        opts.acceleration,
+        Direction::Encode,
+        format,
+        Some(opts.level),
+    )?;
 
     // --- Overwrite check ---
     if output.exists() && !opts.overwrite {
@@ -396,6 +477,7 @@ fn run_compress(
         bytes_total,
         walk_result.as_ref().map(|wr| wr.entries.as_slice()),
         opts.checksum,
+        acceleration.block_encoder,
     );
 
     // --- Best-effort cleanup on failure ---
@@ -415,6 +497,8 @@ fn run_compress(
         duration: start.elapsed(),
         sha256,
         content_sha256,
+        backend: acceleration.backend,
+        acceleration_notice: acceleration.notice,
     })
 }
 
@@ -444,6 +528,7 @@ fn do_compress(
     input_bytes_total: u64,
     walk_entries: Option<&[crate::walk::WalkEntry]>,
     checksum: bool,
+    mut block_encoder: Option<Box<dyn BlockEncoderSession>>,
 ) -> Result<(u64, u64, Option<String>, Option<String>)> {
     match (format.container, format.codec) {
         // 7z container (no codec layer — 7z carries its own LZMA2 codec).
@@ -508,9 +593,9 @@ fn do_compress(
             // HashingWriter first for the artifact digest.
             let mut encoder: Box<dyn Encoder> = if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                new_encoder(codec, Box::new(hw), level)?
+                selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?
             } else {
-                new_encoder(codec, Box::new(out_file), level)?
+                selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?
             };
 
             let entries = {
@@ -592,26 +677,29 @@ fn do_compress(
                 // Build encoder, optionally wrapping output in HashingWriter.
                 if let Some(ref ah) = artifact_hasher {
                     let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                    let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                    let mut encoder =
+                        selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 } else {
-                    let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                    let mut encoder =
+                        selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 }
             } else if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                let mut encoder = selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?;
                 let mut in_file2 = in_file; // reuse (no content hasher in this branch)
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
             } else {
                 let mut in_file2 = in_file;
-                let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                let mut encoder =
+                    selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?;
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
@@ -630,6 +718,26 @@ fn do_compress(
                 operation: "compress".into(),
             })
         }
+    }
+}
+
+fn selected_encoder<'a>(
+    codec: Codec,
+    writer: Box<dyn Write + 'a>,
+    level: Level,
+    block_encoder: &mut Option<Box<dyn BlockEncoderSession>>,
+) -> Result<Box<dyn Encoder + 'a>> {
+    if let Some(session) = block_encoder.take() {
+        if codec != Codec::Lz4 {
+            return Err(Error::AccelerationUnavailable {
+                reason: format!(
+                    "the selected raw-block accelerator cannot frame the {codec} codec"
+                ),
+            });
+        }
+        lz4_accelerated::encoder(session, writer)
+    } else {
+        new_encoder(codec, writer, level)
     }
 }
 
@@ -683,6 +791,16 @@ pub fn extract(
     input: &Path,
     dest: &Path,
     opts: &ExtractOptions,
+    on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    Engine::new().extract(input, dest, opts, on_progress)
+}
+
+fn run_extract(
+    providers: &ProviderRegistry,
+    input: &Path,
+    dest: &Path,
+    opts: &ExtractOptions,
     mut on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
     let start = Instant::now();
@@ -704,6 +822,14 @@ pub fn extract(
             operation: "extract — enable the `rar` feature to extract RAR archives".into(),
         });
     }
+
+    let acceleration = acceleration::select(
+        providers,
+        opts.acceleration,
+        Direction::Decode,
+        format,
+        None,
+    )?;
 
     // --- Artifact verify: stream-hash the input BEFORE creating dest files ---
     //
@@ -782,6 +908,8 @@ pub fn extract(
         duration: start.elapsed(),
         sha256: None,
         content_sha256: None,
+        backend: acceleration.backend,
+        acceleration_notice: acceleration.notice,
     })
 }
 

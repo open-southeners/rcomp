@@ -82,6 +82,23 @@ pub enum Error {
         actual: String,
     },
 
+    /// Hardware acceleration was explicitly required but no compatible
+    /// provider/device could perform the requested operation.
+    #[error("hardware acceleration unavailable: {reason}")]
+    AccelerationUnavailable {
+        /// Human-readable capability or initialization failure.
+        reason: String,
+    },
+
+    /// A selected hardware provider failed during initialization or execution.
+    #[error("hardware acceleration failed in {provider}: {reason}")]
+    AccelerationFailed {
+        /// Stable provider identifier.
+        provider: String,
+        /// Human-readable native or validation failure.
+        reason: String,
+    },
+
     /// An underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),

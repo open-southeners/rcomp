@@ -19,6 +19,7 @@ pub(crate) mod brotli;
 pub(crate) mod bzip2;
 pub(crate) mod gzip;
 pub(crate) mod lz4;
+pub(crate) mod lz4_accelerated;
 pub(crate) mod xz;
 pub(crate) mod zstd;
 
