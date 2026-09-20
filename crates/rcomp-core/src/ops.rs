@@ -479,6 +479,14 @@ fn run_compress(
         opts.checksum,
         acceleration.block_encoder,
     );
+    // An accelerator can surface cancellation through an `io::Error` while it
+    // is used behind `Write`. Preserve the operation-level cancellation
+    // contract instead of exposing that implementation detail to callers.
+    let result = if result.is_err() && opts.cancel.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        result
+    };
 
     // --- Best-effort cleanup on failure ---
     if result.is_err() {
@@ -593,9 +601,21 @@ fn do_compress(
             // HashingWriter first for the artifact digest.
             let mut encoder: Box<dyn Encoder> = if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?
+                selected_encoder(
+                    codec,
+                    Box::new(hw),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?
             } else {
-                selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?
+                selected_encoder(
+                    codec,
+                    Box::new(out_file),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?
             };
 
             let entries = {
@@ -677,29 +697,50 @@ fn do_compress(
                 // Build encoder, optionally wrapping output in HashingWriter.
                 if let Some(ref ah) = artifact_hasher {
                     let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                    let mut encoder =
-                        selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?;
+                    let mut encoder = selected_encoder(
+                        codec,
+                        Box::new(hw),
+                        level,
+                        &mut block_encoder,
+                        ctx.cancel.clone(),
+                    )?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 } else {
-                    let mut encoder =
-                        selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?;
+                    let mut encoder = selected_encoder(
+                        codec,
+                        Box::new(out_file),
+                        level,
+                        &mut block_encoder,
+                        ctx.cancel.clone(),
+                    )?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 }
             } else if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                let mut encoder = selected_encoder(codec, Box::new(hw), level, &mut block_encoder)?;
+                let mut encoder = selected_encoder(
+                    codec,
+                    Box::new(hw),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?;
                 let mut in_file2 = in_file; // reuse (no content hasher in this branch)
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
             } else {
                 let mut in_file2 = in_file;
-                let mut encoder =
-                    selected_encoder(codec, Box::new(out_file), level, &mut block_encoder)?;
+                let mut encoder = selected_encoder(
+                    codec,
+                    Box::new(out_file),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?;
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
@@ -726,6 +767,7 @@ fn selected_encoder<'a>(
     writer: Box<dyn Write + 'a>,
     level: Level,
     block_encoder: &mut Option<Box<dyn BlockEncoderSession>>,
+    cancel: CancelToken,
 ) -> Result<Box<dyn Encoder + 'a>> {
     if let Some(session) = block_encoder.take() {
         if codec != Codec::Lz4 {
@@ -735,7 +777,7 @@ fn selected_encoder<'a>(
                 ),
             });
         }
-        lz4_accelerated::encoder(session, writer)
+        lz4_accelerated::encoder(session, writer, cancel)
     } else {
         new_encoder(codec, writer, level)
     }
