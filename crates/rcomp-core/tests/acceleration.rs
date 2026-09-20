@@ -13,6 +13,10 @@ struct StoredBlockProvider;
 
 struct StoredBlockSession;
 
+struct FailingBlockProvider;
+
+struct FailingBlockSession;
+
 impl BlockEncoderSession for StoredBlockSession {
     fn block_size(&self) -> usize {
         65_536
@@ -76,6 +80,63 @@ impl AcceleratorProvider for StoredBlockProvider {
         _request: &AccelerationRequest,
     ) -> rcomp_core::Result<Box<dyn BlockEncoderSession>> {
         Ok(Box::new(StoredBlockSession))
+    }
+}
+
+impl BlockEncoderSession for FailingBlockSession {
+    fn block_size(&self) -> usize {
+        65_536
+    }
+
+    fn compress_blocks(
+        &mut self,
+        _input: &[u8],
+        _cancel: &rcomp_core::CancelToken,
+    ) -> rcomp_core::Result<Vec<CompressedBlock>> {
+        Err(Error::AccelerationFailed {
+            provider: "failing-test".to_owned(),
+            reason: "simulated asynchronous device failure".to_owned(),
+        })
+    }
+}
+
+impl AcceleratorProvider for FailingBlockProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: "failing-test".to_owned(),
+            name: "Failing test accelerator".to_owned(),
+        }
+    }
+
+    fn devices(&self) -> rcomp_core::Result<Vec<AcceleratorDevice>> {
+        Ok(vec![AcceleratorDevice {
+            provider_id: "failing-test".to_owned(),
+            device_id: "failing-device".to_owned(),
+            name: "Failing GPU".to_owned(),
+        }])
+    }
+
+    fn capabilities(
+        &self,
+        device: &AcceleratorDevice,
+    ) -> rcomp_core::Result<Vec<AcceleratorCapability>> {
+        Ok(vec![AcceleratorCapability {
+            provider_id: "failing-test".to_owned(),
+            device_id: device.device_id.clone(),
+            codec: Codec::Lz4,
+            format: Format::codec(Codec::Lz4),
+            direction: Direction::Encode,
+            levels: vec![Level::Fast],
+            block_size: 65_536,
+            maturity: CapabilityMaturity::Experimental,
+        }])
+    }
+
+    fn open_block_encoder(
+        &self,
+        _request: &AccelerationRequest,
+    ) -> rcomp_core::Result<Box<dyn BlockEncoderSession>> {
+        Ok(Box::new(FailingBlockSession))
     }
 }
 
@@ -147,6 +208,67 @@ fn required_uses_registered_experimental_provider_and_core_framing() {
     let mut decoded = Vec::new();
     decoder.read_to_end(&mut decoded).unwrap();
     assert_eq!(decoded, contents);
+}
+
+#[test]
+fn accelerated_success_atomically_replaces_an_existing_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input.txt");
+    let output = temp.path().join("output.lz4");
+    let contents = vec![b'x'; 70_000];
+    fs::write(&input, &contents).unwrap();
+    fs::write(&output, b"existing output must survive until publication").unwrap();
+
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(StoredBlockProvider));
+    let engine = Engine::with_registry(registry);
+    let opts = CompressOptions {
+        level: Level::Fast,
+        overwrite: true,
+        acceleration: AccelerationPreference::Required,
+        ..Default::default()
+    };
+    engine.compress(&input, &output, &opts, |_| {}).unwrap();
+
+    let mut decoder = lz4::Decoder::new(fs::File::open(&output).unwrap()).unwrap();
+    let mut decoded = Vec::new();
+    decoder.read_to_end(&mut decoded).unwrap();
+    assert_eq!(decoded, contents);
+    assert_no_staged_outputs(temp.path());
+}
+
+#[test]
+fn accelerated_failure_preserves_existing_output_and_removes_staging_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input.txt");
+    let output = temp.path().join("output.lz4");
+    let sentinel = b"existing output must remain byte-identical";
+    fs::write(&input, vec![b'x'; 70_000]).unwrap();
+    fs::write(&output, sentinel).unwrap();
+
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(FailingBlockProvider));
+    let engine = Engine::with_registry(registry);
+    let opts = CompressOptions {
+        level: Level::Fast,
+        overwrite: true,
+        acceleration: AccelerationPreference::Required,
+        ..Default::default()
+    };
+    let error = engine.compress(&input, &output, &opts, |_| {}).unwrap_err();
+
+    assert!(matches!(error, Error::AccelerationFailed { .. }));
+    assert_eq!(fs::read(&output).unwrap(), sentinel);
+    assert_no_staged_outputs(temp.path());
+}
+
+fn assert_no_staged_outputs(directory: &std::path::Path) {
+    let staged = fs::read_dir(directory)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".rcomp-"))
+        .collect::<Vec<_>>();
+    assert!(staged.is_empty(), "staged outputs remained: {staged:?}");
 }
 
 #[test]
