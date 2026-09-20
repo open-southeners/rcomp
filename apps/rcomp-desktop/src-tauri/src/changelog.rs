@@ -1,7 +1,7 @@
 //! Parsed release notes for the in-app "What's New" viewer.
 //!
 //! The webview has no back/forward chrome, so a clicked link just navigates
-//! it away like a lost browser tab. [`render`] therefore strips the
+//! it away like a lost browser tab. `render` therefore strips the
 //! Keep a Changelog / SemVer preamble, the `## [Unreleased]` section (nothing
 //! in it has shipped yet), and every link — keeping each link's text but
 //! dropping the anchor — before handing the rest to the viewer as HTML.

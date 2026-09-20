@@ -66,6 +66,12 @@ impl From<rcomp_core::Error> for IpcError {
                 message,
                 data: Some(serde_json::json!({ "name": name })),
             },
+            rcomp_core::Error::AccelerationUnavailable { .. } => {
+                Self::new("acceleration-unavailable", message)
+            }
+            rcomp_core::Error::AccelerationFailed { .. } => {
+                Self::new("acceleration-failed", message)
+            }
             rcomp_core::Error::Io(_) => Self::new("io", message),
         }
     }

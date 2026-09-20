@@ -38,7 +38,13 @@
     onMenuCloseArchive,
   } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
-  import { loadDefaultFormat, saveDefaultFormat } from "../preferences";
+  import {
+    loadAcceleration,
+    loadDefaultFormat,
+    saveAcceleration,
+    saveDefaultFormat,
+  } from "../preferences";
+  import type { AccelerationPreference } from "../preferences";
   import { humanBytes } from "../types";
   import type {
     InspectResult,
@@ -74,6 +80,13 @@
   function setDefaultFormatPref(next: string | null): void {
     defaultFormatPref = next;
     saveDefaultFormat(next);
+  }
+
+  let acceleration = $state<AccelerationPreference>(loadAcceleration());
+
+  function setAcceleration(next: AccelerationPreference): void {
+    acceleration = next;
+    saveAcceleration(next);
   }
 
   // --- open mode ---
@@ -419,6 +432,8 @@
         onChange={setAppearance}
         defaultFormat={defaultFormatPref}
         onChangeDefaultFormat={setDefaultFormatPref}
+        {acceleration}
+        onChangeAcceleration={setAcceleration}
         onClose={() => (showSettings = false)}
       />
     </div>
@@ -437,6 +452,7 @@
           inputPath={archivePath}
           inspect={archiveInspect}
           entries={entries}
+          {acceleration}
           onRunning={handleRunning}
           onProgress={handleProgress}
           onDone={handleDoneExtract}
@@ -486,6 +502,7 @@
           <ComposePanel
             items={composeItems}
             defaultFormatPref={defaultFormatPref}
+            {acceleration}
             onRunning={handleRunning}
             onProgress={handleProgress}
             onDone={handleDoneCompress}
