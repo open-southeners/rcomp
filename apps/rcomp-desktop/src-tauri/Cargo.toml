@@ -34,9 +34,13 @@ rcomp-core = { path = "../../../crates/rcomp-core", default-features = false, fe
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.3.3", optional = true }
+
 [features]
 default = ["rar"]
 rar = ["rcomp-core/rar"]
+metal = ["dep:rcomp-metal"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
