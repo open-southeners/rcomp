@@ -7,6 +7,9 @@
  */
 
 const DEFAULT_FORMAT_KEY = "rcomp:defaultFormat";
+const ACCELERATION_KEY = "rcomp:acceleration";
+
+export type AccelerationPreference = "cpu" | "auto" | "required";
 
 /** Read the user's pinned default compression format, or `null` for "Auto". */
 export function loadDefaultFormat(): string | null {
@@ -25,6 +28,25 @@ export function saveDefaultFormat(format: string | null): void {
     } else {
       localStorage.removeItem(DEFAULT_FORMAT_KEY);
     }
+  } catch {
+    // Non-fatal; the preference just won't survive a restart.
+  }
+}
+
+/** Read the shared core acceleration preference. CPU preserves legacy behavior. */
+export function loadAcceleration(): AccelerationPreference {
+  try {
+    const value = localStorage.getItem(ACCELERATION_KEY);
+    return value === "auto" || value === "required" ? value : "cpu";
+  } catch {
+    return "cpu";
+  }
+}
+
+/** Persist the acceleration preference used for compression and extraction. */
+export function saveAcceleration(value: AccelerationPreference): void {
+  try {
+    localStorage.setItem(ACCELERATION_KEY, value);
   } catch {
     // Non-fatal; the preference just won't survive a restart.
   }

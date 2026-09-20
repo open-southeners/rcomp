@@ -44,6 +44,10 @@
 
   <p class="dest">{dest}</p>
 
+  {#if report.acceleration_notice}
+    <div class="acceleration-notice" role="alert">{report.acceleration_notice}</div>
+  {/if}
+
   <div class="stats">
     <div class="stat-row">
       <span class="stat-label">Input</span>
@@ -154,6 +158,18 @@
     border-radius: 8px;
     padding: 0.75rem 1rem;
     border: 1px solid var(--border);
+  }
+
+  .acceleration-notice {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-subtle);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.35;
   }
 
   .stat-row {

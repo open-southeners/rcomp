@@ -88,6 +88,8 @@ export interface Report {
   duration: RustDuration;
   sha256: string | null;
   content_sha256: string | null;
+  backend: "cpu" | { accelerator: string };
+  acceleration_notice: string | null;
 }
 
 /** Convert a RustDuration to milliseconds. */
@@ -117,6 +119,7 @@ export interface CompressOpts {
   gitignore: boolean;
   exclude: string[];
   checksum: boolean;
+  acceleration: "cpu" | "auto" | "required";
 }
 
 /** Options for an extract operation. Field names are snake_case (serde). */
@@ -125,6 +128,7 @@ export interface ExtractOpts {
   overwrite: boolean;
   verify_sha256?: string | null;
   verify_content_sha256?: string | null;
+  acceleration: "cpu" | "auto" | "required";
 }
 
 /**

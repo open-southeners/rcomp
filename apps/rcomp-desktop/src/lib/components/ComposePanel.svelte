@@ -23,19 +23,21 @@
     type ContainerName,
   } from "../formats";
   import type { StagedItem, ProgressEvent, Report, IpcError } from "../types";
+  import type { AccelerationPreference } from "../preferences";
 
   interface Props {
     items: StagedItem[];
     /** User's pinned default format from Settings, or `null` for "Auto"
      *  (per-content smart default — see `defaultFormat` in `../formats`). */
     defaultFormatPref: string | null;
+    acceleration: AccelerationPreference;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string) => void;
     onError: (err: IpcError) => void;
   }
 
-  let { items, defaultFormatPref, onRunning, onProgress, onDone, onError }: Props = $props();
+  let { items, defaultFormatPref, acceleration, onRunning, onProgress, onDone, onError }: Props = $props();
 
   let container = $state<ContainerName>("tar");
   let codec = $state<string | null>("zstd");
@@ -146,6 +148,7 @@
       gitignore,
       exclude: parseExclude(excludeText),
       checksum,
+      acceleration,
     };
 
     try {

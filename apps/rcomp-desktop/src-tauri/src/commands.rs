@@ -12,8 +12,9 @@
 use std::{fs, path::Path, str::FromStr, time::Instant};
 
 use rcomp_core::{
-    CompressOptions, Entry, Error as CoreError, ExtractOptions, Format, Level, Report, detect,
-    distinct_roots, format_sidecar, list, parse_sidecar, wrap_dir_name,
+    AccelerationPreference, CompressOptions, Engine, Entry, Error as CoreError, ExtractOptions,
+    Format, Level, ProviderRegistry, Report, detect, distinct_roots, format_sidecar, list,
+    parse_sidecar, wrap_dir_name,
 };
 
 use crate::{
@@ -41,6 +42,9 @@ pub struct CompressOpts {
     pub exclude: Vec<String>,
     /// When `true`, compute and return SHA-256 checksums for the output.
     pub checksum: bool,
+    /// Hardware-acceleration preference selected in Settings.
+    #[serde(default)]
+    pub acceleration: AccelerationPreference,
 }
 
 /// Deserialised options forwarded from the frontend for an extract operation.
@@ -54,6 +58,9 @@ pub struct ExtractOpts {
     pub verify_sha256: Option<String>,
     /// Expected SHA-256 digest of the decompressed content stream (lowercase hex).
     pub verify_content_sha256: Option<String>,
+    /// Hardware-acceleration preference selected in Settings.
+    #[serde(default)]
+    pub acceleration: AccelerationPreference,
 }
 
 /// Filesystem metadata snapshot returned by the `inspect` command.
@@ -194,6 +201,7 @@ pub fn do_compress(
         follow_gitignore: opts.gitignore,
         exclude: opts.exclude,
         checksum: opts.checksum,
+        acceleration: opts.acceleration,
     };
 
     let mut throttle = ProgressThrottle::default();
@@ -201,7 +209,7 @@ pub fn do_compress(
     // Track the last seen progress so we can synthesise a final event.
     let mut last_progress: Option<rcomp_core::Progress> = None;
 
-    let result = rcomp_core::compress(input, output, &core_opts, |p| {
+    let result = operation_engine().compress(input, output, &core_opts, |p| {
         last_progress = Some(p.clone());
         if throttle.should_forward(p, Instant::now()) {
             sink(ProgressEvent::from(p));
@@ -269,12 +277,13 @@ pub fn do_compress_many(
         follow_gitignore: opts.gitignore,
         exclude: opts.exclude,
         checksum: opts.checksum,
+        acceleration: opts.acceleration,
     };
 
     let mut throttle = ProgressThrottle::default();
     let mut last_progress: Option<rcomp_core::Progress> = None;
 
-    let result = rcomp_core::compress_many(inputs, output, &core_opts, |p| {
+    let result = operation_engine().compress_many(inputs, output, &core_opts, |p| {
         last_progress = Some(p.clone());
         if throttle.should_forward(p, Instant::now()) {
             sink(ProgressEvent::from(p));
@@ -334,12 +343,13 @@ pub fn do_extract(
         cancel: token,
         verify_sha256: opts.verify_sha256,
         verify_content_sha256: opts.verify_content_sha256,
+        acceleration: opts.acceleration,
     };
 
     let mut throttle = ProgressThrottle::default();
     let mut last_progress: Option<rcomp_core::Progress> = None;
 
-    let result = rcomp_core::extract(input, dest, &core_opts, |p| {
+    let result = operation_engine().extract(input, dest, &core_opts, |p| {
         last_progress = Some(p.clone());
         if throttle.should_forward(p, Instant::now()) {
             sink(ProgressEvent::from(p));
@@ -468,6 +478,21 @@ pub fn do_wrap_info(input: &Path) -> Result<WrapInfo, IpcError> {
 // Private helpers
 // ---------------------------------------------------------------------------
 
+fn operation_engine() -> Engine {
+    let providers = ProviderRegistry::new();
+
+    #[cfg(all(target_os = "macos", feature = "metal"))]
+    let providers = {
+        let mut providers = providers;
+        if let Ok(provider) = rcomp_metal::MetalProvider::new() {
+            providers.register(std::sync::Arc::new(provider));
+        }
+        providers
+    };
+
+    Engine::with_registry(providers)
+}
+
 /// Return the sidecar path for a given archive path: `<path>.sha256`.
 fn sidecar_path_for(path: &Path) -> std::path::PathBuf {
     let mut p = path.as_os_str().to_os_string();
@@ -579,6 +604,7 @@ pub async fn compress(
         follow_gitignore: opts.gitignore,
         exclude: opts.exclude,
         checksum: opts.checksum,
+        acceleration: opts.acceleration,
     };
 
     let channel_clone = channel.clone();
@@ -664,6 +690,7 @@ pub async fn compress_many(
         follow_gitignore: opts.gitignore,
         exclude: opts.exclude,
         checksum: opts.checksum,
+        acceleration: opts.acceleration,
     };
 
     let channel_clone = channel.clone();
@@ -744,6 +771,7 @@ pub async fn extract(
         cancel: token,
         verify_sha256: opts.verify_sha256,
         verify_content_sha256: opts.verify_content_sha256,
+        acceleration: opts.acceleration,
     };
 
     let channel_clone = channel.clone();
@@ -830,6 +858,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let report = do_compress_many(&reg, "j-many", &[a, b], &output, opts, &mut sink)
             .expect("compress_many should succeed");
@@ -862,6 +891,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let err = do_compress_many(&reg, "j-dup", &[a, b], &output, opts, &mut sink)
             .expect_err("duplicate basenames must error");
@@ -889,6 +919,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r1 = do_compress(&reg, "j-ow-1", &input, &output, opts1, &mut sink);
         assert!(r1.is_ok(), "first compress should succeed: {:?}", r1);
@@ -901,6 +932,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r2 = do_compress(&reg, "j-ow-2", &input, &output, opts2, &mut sink);
         let err = r2.expect_err("second compress with overwrite:false must fail");
@@ -917,6 +949,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r3 = do_compress(&reg, "j-ow-3", &input, &output, opts3, &mut sink);
         assert!(
@@ -997,6 +1030,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let report = do_compress(&reg, "j-prog", &input, &output, opts, &mut sink)
             .expect("compress should succeed");
@@ -1068,6 +1102,7 @@ mod tests {
                 gitignore: false,
                 exclude: vec![],
                 checksum: false,
+                acceleration: AccelerationPreference::Cpu,
             };
             do_compress(
                 &reg_thread,
@@ -1159,6 +1194,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-inspect", &input, &output, opts, &mut sink)
             .expect("compress for inspect test");
@@ -1201,6 +1237,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-wrap-multi", &src, &archive, opts, &mut sink)
             .expect("compress for wrap_info multi-root test");
@@ -1235,6 +1272,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-wrap-bare", &input, &archive, opts, &mut sink)
             .expect("compress for wrap_info bare test");
