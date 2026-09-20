@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It remains excluded from automatic selection until crossover measurements
   exist across representative Apple Silicon devices.
 
+### Changed
+
+- Accelerated compression now writes to a synchronized temporary sibling and
+  atomically publishes the completed artifact. Cancellation or provider
+  failure removes staging data while preserving any existing destination.
+
 ## [0.3.3] - 2026-09-11
 
 ### Changed

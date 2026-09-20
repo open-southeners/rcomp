@@ -50,6 +50,7 @@ use std::{
 };
 
 use sha2::{Digest as _, Sha256};
+use tempfile::{Builder as TempFileBuilder, TempPath};
 
 use crate::{
     AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
@@ -467,10 +468,20 @@ fn run_compress(
         progress,
     };
 
+    // Accelerated output is staged beside the destination. Keeping both paths
+    // on the same filesystem lets publication use an atomic rename and avoids
+    // exposing partial frames or damaging an existing output on failure.
+    let staged_output = acceleration
+        .block_encoder
+        .is_some()
+        .then(|| staged_output_path(output))
+        .transpose()?;
+    let write_output = staged_output.as_deref().unwrap_or(output);
+
     // --- Dispatch ---
     let result = do_compress(
         &dispatch_input,
-        output,
+        write_output,
         format,
         opts.level,
         &mut ctx,
@@ -490,10 +501,18 @@ fn run_compress(
 
     // --- Best-effort cleanup on failure ---
     if result.is_err() {
-        let _ = fs::remove_file(output);
+        let _ = fs::remove_file(write_output);
     }
 
     let (entries, input_bytes, sha256, content_sha256) = result?;
+
+    if opts.cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    if let Some(staged_output) = staged_output {
+        sync_staged_output(&staged_output)?;
+        publish_staged_output(staged_output, output, opts.overwrite)?;
+    }
 
     let output_bytes = fs::metadata(output).map(|m| m.len()).unwrap_or(0);
 
@@ -507,6 +526,44 @@ fn run_compress(
         content_sha256,
         backend: acceleration.backend,
         acceleration_notice: acceleration.notice,
+    })
+}
+
+fn staged_output_path(output: &Path) -> Result<TempPath> {
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file = TempFileBuilder::new()
+        .prefix(".rcomp-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+    Ok(file.into_temp_path())
+}
+
+fn sync_staged_output(path: &Path) -> Result<()> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()?;
+    Ok(())
+}
+
+fn publish_staged_output(staged: TempPath, output: &Path, overwrite: bool) -> Result<()> {
+    let result = if overwrite {
+        staged.persist(output)
+    } else {
+        staged.persist_noclobber(output)
+    };
+    result.map_err(|error| {
+        if error.error.kind() == io::ErrorKind::AlreadyExists {
+            Error::AlreadyExists {
+                path: output.to_path_buf(),
+            }
+        } else {
+            Error::Io(error.error)
+        }
     })
 }
 
