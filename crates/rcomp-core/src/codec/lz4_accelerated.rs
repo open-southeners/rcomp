@@ -422,6 +422,35 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
 
+    enum BrokenBehavior {
+        MissingBlock,
+        WrongInputSize,
+        Panic,
+    }
+
+    struct BrokenSession(BrokenBehavior);
+
+    impl BlockEncoderSession for BrokenSession {
+        fn block_size(&self) -> usize {
+            65_536
+        }
+
+        fn compress_blocks(
+            &mut self,
+            input: &[u8],
+            _cancel: &CancelToken,
+        ) -> Result<Vec<CompressedBlock>> {
+            match self.0 {
+                BrokenBehavior::MissingBlock => Ok(Vec::new()),
+                BrokenBehavior::WrongInputSize => Ok(vec![CompressedBlock {
+                    input_size: input.len() + 1,
+                    bytes: vec![0; input.len()],
+                }]),
+                BrokenBehavior::Panic => panic!("simulated accelerator worker panic"),
+            }
+        }
+    }
+
     impl BlockEncoderSession for CancellationSession {
         fn block_size(&self) -> usize {
             65_536
@@ -563,5 +592,50 @@ mod tests {
         let result = operation.join().expect("bridge thread should not panic");
         assert!(matches!(result, Err(Error::Cancelled)));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn malformed_block_count_is_rejected() {
+        let mut output = Vec::new();
+        let mut encoder = encoder(
+            Box::new(BrokenSession(BrokenBehavior::MissingBlock)),
+            Box::new(&mut output),
+            CancelToken::default(),
+        )
+        .unwrap();
+        encoder.write_all(b"input").unwrap();
+        let error = encoder.finish().unwrap_err();
+        assert!(matches!(error, Error::AccelerationFailed { .. }));
+        assert!(error.to_string().contains("returned 0 LZ4 blocks"));
+    }
+
+    #[test]
+    fn malformed_block_input_size_is_rejected() {
+        let mut output = Vec::new();
+        let mut encoder = encoder(
+            Box::new(BrokenSession(BrokenBehavior::WrongInputSize)),
+            Box::new(&mut output),
+            CancelToken::default(),
+        )
+        .unwrap();
+        encoder.write_all(b"input").unwrap();
+        let error = encoder.finish().unwrap_err();
+        assert!(matches!(error, Error::AccelerationFailed { .. }));
+        assert!(error.to_string().contains("represents 6 bytes, expected 5"));
+    }
+
+    #[test]
+    fn worker_panic_becomes_a_provider_failure() {
+        let mut output = Vec::new();
+        let mut encoder = encoder(
+            Box::new(BrokenSession(BrokenBehavior::Panic)),
+            Box::new(&mut output),
+            CancelToken::default(),
+        )
+        .unwrap();
+        encoder.write_all(b"input").unwrap();
+        let error = encoder.finish().unwrap_err();
+        assert!(matches!(error, Error::AccelerationFailed { .. }));
+        assert!(error.to_string().contains("worker stopped"));
     }
 }
