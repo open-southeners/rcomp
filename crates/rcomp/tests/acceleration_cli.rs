@@ -83,6 +83,38 @@ fn invalid_environment_value_is_a_usage_error() {
         .stderr(predicate::str::contains("invalid accelerator mode"));
 }
 
+#[test]
+fn hardware_command_reports_inventory_or_build_guidance() {
+    rcomp()
+        .arg("hardware")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("provider"));
+}
+
+#[test]
+fn required_explicit_device_reports_the_requested_identifier() {
+    let tmp = TempDir::new().unwrap();
+    let (input, output) = paths(&tmp, "lz4");
+
+    rcomp()
+        .args([
+            &input,
+            &output,
+            "--fast",
+            "--accelerator",
+            "required",
+            "--accelerator-device",
+            "wgpu:missing-device",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("wgpu:missing-device"));
+
+    assert!(!std::path::Path::new(&output).exists());
+}
+
 #[cfg(all(target_os = "macos", feature = "metal"))]
 #[test]
 #[ignore = "requires a Metal-capable macOS runner"]

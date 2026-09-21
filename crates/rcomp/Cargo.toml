@@ -16,6 +16,7 @@ path = "src/main.rs"
 default = ["rar"]
 rar = ["rcomp-core/rar"]
 metal = ["dep:rcomp-metal"]
+wgpu = ["dep:rcomp-wgpu"]
 
 [dependencies]
 rcomp-core = { path = "../rcomp-core", version = "0.3.3" }
@@ -33,3 +34,6 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rcomp-metal = { path = "../rcomp-metal", version = "0.3.3", optional = true }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+rcomp-wgpu = { path = "../rcomp-wgpu", version = "0.3.3", optional = true }
