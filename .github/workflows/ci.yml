@@ -93,6 +93,8 @@ jobs:
         run: bun run build
       - name: Build Tauri crate
         run: cargo build -p rcomp-desktop --locked
+      - name: Check Tauri portable-GPU feature
+        run: cargo check -p rcomp-desktop --features wgpu --locked
 
   no-default-features:
     name: No-default-features
