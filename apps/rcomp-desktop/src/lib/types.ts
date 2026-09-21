@@ -79,6 +79,21 @@ export interface RustDuration {
   nanos: number;
 }
 
+/** Stable reason an automatic hardware request used the CPU. */
+export type AccelerationFallbackReason =
+  | { code: "no_provider_installed" }
+  | { code: "no_compatible_device" }
+  | { code: "unsupported_operation" }
+  | { code: "unsupported_codec" }
+  | { code: "unsupported_format" }
+  | { code: "unsupported_direction" }
+  | { code: "unsupported_level" }
+  | { code: "experimental_capability" }
+  | { code: "provider_discovery_failed"; provider_id: string }
+  | { code: "provider_initialization_failed"; provider_id: string }
+  | { code: "provider_execution_failed_cpu_retry"; provider_id: string }
+  | { code: "explicit_target_unavailable"; target: string };
+
 /** Report returned on successful compress or extract. */
 export interface Report {
   input_bytes: number;
@@ -90,6 +105,7 @@ export interface Report {
   content_sha256: string | null;
   backend: "cpu" | { accelerator: string };
   acceleration_notice: string | null;
+  acceleration_fallback: AccelerationFallbackReason | null;
 }
 
 /** Convert a RustDuration to milliseconds. */

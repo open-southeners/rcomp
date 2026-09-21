@@ -481,6 +481,18 @@ pub fn do_wrap_info(input: &Path) -> Result<WrapInfo, IpcError> {
 fn operation_engine() -> Engine {
     let providers = ProviderRegistry::new();
 
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux", target_os = "macos"),
+        feature = "wgpu"
+    ))]
+    let providers = {
+        let mut providers = providers;
+        if let Ok(provider) = rcomp_wgpu::WgpuProvider::new() {
+            providers.register(std::sync::Arc::new(provider));
+        }
+        providers
+    };
+
     #[cfg(all(target_os = "macos", feature = "metal"))]
     let providers = {
         let mut providers = providers;

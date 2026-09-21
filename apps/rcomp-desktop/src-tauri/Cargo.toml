@@ -33,6 +33,7 @@ rcomp-core = { path = "../../../crates/rcomp-core", default-features = false, fe
 # Windows/Linux) to the already-running instance instead of opening a new window.
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"
+rcomp-wgpu = { path = "../../../crates/rcomp-wgpu", version = "0.3.3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.3.3", optional = true }
@@ -41,6 +42,7 @@ rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.3.3", optiona
 default = ["rar"]
 rar = ["rcomp-core/rar"]
 metal = ["dep:rcomp-metal"]
+wgpu = ["dep:rcomp-wgpu"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
