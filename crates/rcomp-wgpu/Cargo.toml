@@ -1,0 +1,35 @@
+[package]
+name = "rcomp-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Experimental portable GPU compute provider for rcomp"
+readme = "README.md"
+rust-version = "1.87"
+keywords.workspace = true
+categories = ["compression"]
+publish = false
+
+[[example]]
+name = "wgpu-lz4"
+path = "examples/wgpu_lz4.rs"
+
+[dependencies]
+rcomp-core = { path = "../rcomp-core", version = "0.3.3", default-features = false }
+thiserror.workspace = true
+pollster.workspace = true
+wgpu.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+
+[dev-dependencies]
+lz4.workspace = true
+tempfile.workspace = true
+naga = { version = "30.0.1", features = ["wgsl-in"] }
