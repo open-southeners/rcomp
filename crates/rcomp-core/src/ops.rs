@@ -54,7 +54,7 @@ use tempfile::{Builder as TempFileBuilder, TempPath};
 
 use crate::{
     AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
-    ProviderRegistry, Result, acceleration,
+    ProcessingBackend, ProviderRegistry, Result, acceleration,
     archive::{OpCtx, sevenz, tar, zip},
     codec::{Encoder, lz4_accelerated, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
@@ -503,12 +503,14 @@ fn run_compress(
     // Accelerated output is staged beside the destination. Keeping both paths
     // on the same filesystem lets publication use an atomic rename and avoids
     // exposing partial frames or damaging an existing output on failure.
-    let staged_output = acceleration
-        .block_encoder
-        .is_some()
+    let accelerated = acceleration.block_encoder.is_some();
+    let staged_output = accelerated
         .then(|| staged_output_path(output))
         .transpose()?;
     let write_output = staged_output.as_deref().unwrap_or(output);
+    let mut backend = acceleration.backend;
+    let mut acceleration_notice = acceleration.notice;
+    let mut acceleration_fallback = acceleration.fallback_reason;
 
     // --- Dispatch ---
     let result = do_compress(
@@ -525,11 +527,45 @@ fn run_compress(
     // An accelerator can surface cancellation through an `io::Error` while it
     // is used behind `Write`. Preserve the operation-level cancellation
     // contract instead of exposing that implementation detail to callers.
-    let result = if result.is_err() && opts.cancel.is_cancelled() {
+    let mut result = if result.is_err() && opts.cancel.is_cancelled() {
         Err(Error::Cancelled)
     } else {
         result
     };
+
+    // `Auto` may safely retry a failed accelerator because regular-file GPU
+    // output is isolated in a temporary sibling and has not been published.
+    // `Required`, cancellation, and unrelated I/O/codec failures never retry.
+    if opts.acceleration == AccelerationPreference::Auto
+        && accelerated
+        && !opts.cancel.is_cancelled()
+        && let Err(error) = &result
+        && let Some(provider_id) = acceleration_failure_provider(error)
+    {
+        let _ = fs::remove_file(write_output);
+        ctx.progress.bytes_done = 0;
+        ctx.progress.current_entry = None;
+        result = do_compress(
+            &dispatch_input,
+            write_output,
+            format,
+            opts.level,
+            &mut ctx,
+            bytes_total,
+            walk_result.as_ref().map(|wr| wr.entries.as_slice()),
+            opts.checksum,
+            None,
+        );
+        if result.is_ok() {
+            backend = ProcessingBackend::Cpu;
+            acceleration_notice = Some(format!(
+                "hardware provider `{provider_id}` failed during {format} encoding; retried successfully on CPU"
+            ));
+            acceleration_fallback = Some(
+                crate::AccelerationFallbackReason::ProviderExecutionFailedCpuRetry { provider_id },
+            );
+        }
+    }
 
     // --- Best-effort cleanup on failure ---
     if result.is_err() {
@@ -556,10 +592,21 @@ fn run_compress(
         duration: start.elapsed(),
         sha256,
         content_sha256,
-        backend: acceleration.backend,
-        acceleration_notice: acceleration.notice,
-        acceleration_fallback: acceleration.fallback_reason,
+        backend,
+        acceleration_notice,
+        acceleration_fallback,
     })
+}
+
+fn acceleration_failure_provider(error: &Error) -> Option<String> {
+    match error {
+        Error::AccelerationFailed { provider, .. } => Some(provider.clone()),
+        Error::Io(error) => error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<Error>())
+            .and_then(acceleration_failure_provider),
+        _ => None,
+    }
 }
 
 fn staged_output_path(output: &Path) -> Result<TempPath> {
