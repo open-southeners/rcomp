@@ -22,12 +22,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state, and payload-only host copies substantially reduce dispatch overhead.
   It remains excluded from automatic selection until crossover measurements
   exist across representative Apple Silicon devices.
+- Added the first opt-in `rcomp-wgpu` provider slice, using a single baseline
+  WGSL LZ4 kernel through Direct3D 12 on Windows, Vulkan on Linux, and Metal on
+  Apple Silicon. It discovers and ranks compatible adapters, derives bounded
+  batches from reported limits, reuses GPU buffers and pipeline state, and
+  integrates with the existing core LZ4 framing, cancellation, and atomic
+  publication path. The capability remains experimental and requires explicit
+  `--accelerator required` selection while Intel, NVIDIA, AMD, and Apple
+  hardware qualification is completed.
+- Added `rcomp hardware` provider/device inventory and exact selection through
+  `--accelerator-device PROVIDER:DEVICE-ID` or `RCOMP_ACCELERATOR_DEVICE`.
+  Provider diagnostics include backend, driver, buffer limits, batch policy,
+  and exact capabilities where available.
+- Added stable structured acceleration fallback reasons alongside the existing
+  human-readable report notice, covering missing providers/devices,
+  unsupported operations, experimental capabilities, explicit selectors, and
+  provider discovery or initialization failures.
+- Expanded the deterministic accelerator harness with malformed block-count,
+  invalid input-length, worker-panic, queued cancellation, active
+  cancellation, and atomic cleanup coverage.
+- Qualified the portable WGSL path on an Apple M3 Max, including block
+  boundaries, incompressible input, a 256 MiB batch boundary, complete LZ4
+  frame round trips, and payload-only readback. The provider remains
+  experimental because the portable Metal path is still slower than CPU and
+  native Metal on the fixed 573 MiB corpus.
 
 ### Changed
 
 - Accelerated compression now writes to a synchronized temporary sibling and
   atomically publishes the completed artifact. Cancellation or provider
   failure removes staging data while preserving any existing destination.
+- Automatic file compression now retries once on CPU when a selected supported
+  accelerator fails during execution. The retry occurs before atomic
+  publication, is reported structurally and in display text, and is never
+  applied to `required`, cancellation, or unrelated codec/I/O failures.
+- Native Metal session creation and each worker dispatch now run inside an
+  explicit Objective-C autorelease pool; the complete native Metal hardware
+  suite passes on the M3 Max with that lifecycle policy.
 
 ## [0.3.3] - 2026-09-11
 
