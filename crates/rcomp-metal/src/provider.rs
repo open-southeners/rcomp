@@ -1,7 +1,7 @@
 use rcomp_core::{
-    AccelerationRequest, AcceleratorCapability, AcceleratorDevice, AcceleratorProvider,
-    BlockEncoderSession, CapabilityMaturity, Codec, CompressedBlock, Container, Direction,
-    Error as CoreError, Format, Level, ProviderDescriptor,
+    AccelerationRequest, AcceleratorCapability, AcceleratorDevice, AcceleratorDeviceProperty,
+    AcceleratorProvider, BlockEncoderSession, CapabilityMaturity, Codec, CompressedBlock,
+    Container, Direction, Error as CoreError, Format, Level, ProviderDescriptor,
 };
 
 #[cfg(target_os = "macos")]
@@ -70,6 +70,38 @@ impl AcceleratorProvider for MetalProvider {
             device_id: self.device_id(),
             name: self.device.name.clone(),
         }])
+    }
+
+    fn device_properties(
+        &self,
+        device: &AcceleratorDevice,
+    ) -> rcomp_core::Result<Vec<AcceleratorDeviceProperty>> {
+        if device.provider_id != PROVIDER_ID || device.device_id != self.device_id() {
+            return Err(CoreError::AccelerationUnavailable {
+                reason: format!(
+                    "device {} does not belong to the Metal provider",
+                    device.device_id
+                ),
+            });
+        }
+        Ok([
+            ("architecture", self.device.architecture.clone()),
+            ("unified_memory", self.device.has_unified_memory.to_string()),
+            ("low_power", self.device.is_low_power.to_string()),
+            ("headless", self.device.is_headless.to_string()),
+            ("removable", self.device.is_removable.to_string()),
+            ("max_buffer_size", self.device.max_buffer_length.to_string()),
+            (
+                "recommended_working_set_size",
+                self.device.recommended_working_set_size.to_string(),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| AcceleratorDeviceProperty {
+            key: key.to_owned(),
+            value,
+        })
+        .collect())
     }
 
     fn capabilities(
