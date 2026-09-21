@@ -78,6 +78,7 @@ use crate::archive::rar;
 #[derive(Clone, Default)]
 pub struct Engine {
     providers: ProviderRegistry,
+    accelerator_target: Option<crate::AcceleratorTarget>,
 }
 
 impl Engine {
@@ -90,7 +91,20 @@ impl Engine {
     /// Create an engine using an application-supplied provider registry.
     #[must_use]
     pub fn with_registry(providers: ProviderRegistry) -> Self {
-        Self { providers }
+        Self {
+            providers,
+            accelerator_target: None,
+        }
+    }
+
+    /// Restrict acceleration to one exact provider device.
+    ///
+    /// This is primarily useful on systems with multiple GPUs and for
+    /// hardware qualification. CPU operation is unaffected.
+    #[must_use]
+    pub fn with_accelerator_target(mut self, target: crate::AcceleratorTarget) -> Self {
+        self.accelerator_target = Some(target);
+        self
     }
 
     /// Return the provider registry used by this engine.
@@ -109,6 +123,7 @@ impl Engine {
     ) -> Result<Report> {
         run_compress(
             &self.providers,
+            self.accelerator_target.as_ref(),
             std::slice::from_ref(&input.to_path_buf()),
             output,
             opts,
@@ -125,7 +140,15 @@ impl Engine {
         opts: &CompressOptions,
         on_progress: impl FnMut(&Progress),
     ) -> Result<Report> {
-        run_compress(&self.providers, inputs, output, opts, true, on_progress)
+        run_compress(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            inputs,
+            output,
+            opts,
+            true,
+            on_progress,
+        )
     }
 
     /// Extract one input using this engine's registered providers.
@@ -136,7 +159,14 @@ impl Engine {
         opts: &ExtractOptions,
         on_progress: impl FnMut(&Progress),
     ) -> Result<Report> {
-        run_extract(&self.providers, input, dest, opts, on_progress)
+        run_extract(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            input,
+            dest,
+            opts,
+            on_progress,
+        )
     }
 }
 
@@ -338,6 +368,7 @@ pub fn compress_many(
 ///   preserved as a top-level root via [`collect_many`].
 fn run_compress(
     providers: &ProviderRegistry,
+    accelerator_target: Option<&crate::AcceleratorTarget>,
     inputs: &[PathBuf],
     output: &Path,
     opts: &CompressOptions,
@@ -402,6 +433,7 @@ fn run_compress(
     let acceleration = acceleration::select(
         providers,
         opts.acceleration,
+        accelerator_target,
         Direction::Encode,
         format,
         Some(opts.level),
@@ -526,6 +558,7 @@ fn run_compress(
         content_sha256,
         backend: acceleration.backend,
         acceleration_notice: acceleration.notice,
+        acceleration_fallback: acceleration.fallback_reason,
     })
 }
 
@@ -897,6 +930,7 @@ pub fn extract(
 
 fn run_extract(
     providers: &ProviderRegistry,
+    accelerator_target: Option<&crate::AcceleratorTarget>,
     input: &Path,
     dest: &Path,
     opts: &ExtractOptions,
@@ -925,6 +959,7 @@ fn run_extract(
     let acceleration = acceleration::select(
         providers,
         opts.acceleration,
+        accelerator_target,
         Direction::Decode,
         format,
         None,
@@ -1009,6 +1044,7 @@ fn run_extract(
         content_sha256: None,
         backend: acceleration.backend,
         acceleration_notice: acceleration.notice,
+        acceleration_fallback: acceleration.fallback_reason,
     })
 }
 

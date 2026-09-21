@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{ProcessingBackend, archive::OpCtx};
+use crate::{AccelerationFallbackReason, ProcessingBackend, archive::OpCtx};
 
 /// A snapshot of progress for a running compress or extract operation.
 ///
@@ -96,6 +96,9 @@ pub struct Report {
     pub backend: ProcessingBackend,
     /// User-visible explanation when automatic acceleration fell back to CPU.
     pub acceleration_notice: Option<String>,
+    /// Stable machine-readable reason paired with [`Self::acceleration_notice`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub acceleration_fallback: Option<AccelerationFallbackReason>,
 }
 
 impl Report {
@@ -220,6 +223,7 @@ mod tests {
             content_sha256: None,
             backend: ProcessingBackend::Cpu,
             acceleration_notice: None,
+            acceleration_fallback: None,
         };
         let ratio = report.ratio();
         assert!(
@@ -240,6 +244,7 @@ mod tests {
             content_sha256: None,
             backend: ProcessingBackend::Cpu,
             acceleration_notice: None,
+            acceleration_fallback: None,
         };
         assert_eq!(report.ratio(), 0.0);
     }
@@ -257,6 +262,7 @@ mod tests {
             content_sha256: None,
             backend: ProcessingBackend::Cpu,
             acceleration_notice: None,
+            acceleration_fallback: None,
         };
         assert!(report.ratio() > 1.0);
     }
@@ -337,7 +343,7 @@ mod tests {
         use std::time::Duration;
 
         use crate::{
-            ProcessingBackend,
+            AccelerationFallbackReason, ProcessingBackend,
             format::{Codec, Container, Format},
             progress::Report,
         };
@@ -370,6 +376,7 @@ mod tests {
                 content_sha256: None,
                 backend: ProcessingBackend::Cpu,
                 acceleration_notice: Some("CPU fallback".to_string()),
+                acceleration_fallback: Some(AccelerationFallbackReason::ExperimentalCapability),
             };
             let json = serde_json::to_string(&original).expect("serialise Report");
             let decoded: Report = serde_json::from_str(&json).expect("deserialise Report");
@@ -382,6 +389,10 @@ mod tests {
             assert_eq!(decoded.content_sha256, original.content_sha256);
             assert_eq!(decoded.backend, original.backend);
             assert_eq!(decoded.acceleration_notice, original.acceleration_notice);
+            assert_eq!(
+                decoded.acceleration_fallback,
+                original.acceleration_fallback
+            );
         }
     }
 }
