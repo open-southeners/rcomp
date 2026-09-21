@@ -37,3 +37,5 @@ predicates = "3"
 ignore = "0.4"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
+pollster = "0.4"
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
