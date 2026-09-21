@@ -3,10 +3,10 @@
 use std::{fs, io::Read, sync::Arc};
 
 use rcomp_core::{
-    AccelerationPreference, AccelerationRequest, AcceleratorCapability, AcceleratorDevice,
-    AcceleratorProvider, BlockEncoderSession, CapabilityMaturity, Codec, CompressOptions,
-    CompressedBlock, Container, Direction, Engine, Error, Format, Level, ProcessingBackend,
-    ProviderDescriptor, ProviderRegistry, compress,
+    AccelerationFallbackReason, AccelerationPreference, AccelerationRequest, AcceleratorCapability,
+    AcceleratorDevice, AcceleratorProvider, BlockEncoderSession, CapabilityMaturity, Codec,
+    CompressOptions, CompressedBlock, Container, Direction, Engine, Error, Format, Level,
+    ProcessingBackend, ProviderDescriptor, ProviderRegistry, compress,
 };
 
 struct StoredBlockProvider;
@@ -160,6 +160,10 @@ fn auto_compression_reports_cpu_fallback() {
             .as_deref()
             .is_some_and(|notice| notice.contains("zstd"))
     );
+    assert_eq!(
+        report.acceleration_fallback,
+        Some(AccelerationFallbackReason::NoProviderInstalled)
+    );
     assert!(output.is_file());
 }
 
@@ -203,6 +207,7 @@ fn required_uses_registered_experimental_provider_and_core_framing() {
         ProcessingBackend::Accelerator("test:test-device".to_owned())
     );
     assert!(report.acceleration_notice.is_none());
+    assert!(report.acceleration_fallback.is_none());
 
     let mut decoder = lz4::Decoder::new(fs::File::open(output).unwrap()).unwrap();
     let mut decoded = Vec::new();
@@ -335,5 +340,9 @@ fn auto_ignores_registered_experimental_provider() {
             .acceleration_notice
             .as_deref()
             .is_some_and(|notice| notice.contains("experimental"))
+    );
+    assert_eq!(
+        report.acceleration_fallback,
+        Some(AccelerationFallbackReason::ExperimentalCapability)
     );
 }

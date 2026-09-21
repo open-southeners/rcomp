@@ -47,9 +47,10 @@ pub mod sidecar;
 pub(crate) mod walk;
 
 pub use acceleration::{
-    AccelerationPreference, AccelerationRequest, AcceleratorCapability, AcceleratorDevice,
-    AcceleratorProvider, BlockEncoderSession, CapabilityMaturity, CompressedBlock, Direction,
-    ProcessingBackend, ProviderDescriptor, ProviderRegistry,
+    AccelerationFallbackReason, AccelerationPreference, AccelerationRequest, AcceleratorCapability,
+    AcceleratorDevice, AcceleratorDeviceProperty, AcceleratorProvider, AcceleratorTarget,
+    BlockEncoderSession, CapabilityMaturity, CompressedBlock, Direction, ProcessingBackend,
+    ProviderDescriptor, ProviderRegistry,
 };
 pub use codec::{Encoder, new_decoder, new_encoder};
 pub use detect::{detect, detect_from_bytes, detect_from_extension, split_format_suffix};

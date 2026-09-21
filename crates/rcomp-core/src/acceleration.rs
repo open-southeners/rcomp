@@ -28,6 +28,43 @@ pub enum AccelerationPreference {
     Required,
 }
 
+/// Explicit accelerator provider and device requested by an application.
+///
+/// The textual form is `PROVIDER:DEVICE-ID`. Device identifiers may contain
+/// additional colons, so only the first colon separates the provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceleratorTarget {
+    /// Stable provider identifier, such as `wgpu` or `metal`.
+    pub provider_id: String,
+    /// Provider-specific device identifier.
+    pub device_id: String,
+}
+
+impl fmt::Display for AcceleratorTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.provider_id, self.device_id)
+    }
+}
+
+impl FromStr for AcceleratorTarget {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let (provider_id, device_id) = value.split_once(':').ok_or_else(|| {
+            format!("invalid accelerator device `{value}` (expected PROVIDER:DEVICE-ID)")
+        })?;
+        if provider_id.is_empty() || device_id.is_empty() {
+            return Err(format!(
+                "invalid accelerator device `{value}` (provider and device ID must be non-empty)"
+            ));
+        }
+        Ok(Self {
+            provider_id: provider_id.to_owned(),
+            device_id: device_id.to_owned(),
+        })
+    }
+}
+
 impl fmt::Display for AccelerationPreference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -85,6 +122,52 @@ pub enum ProcessingBackend {
     Accelerator(String),
 }
 
+/// Stable reason that an automatic acceleration request used the CPU.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(tag = "code", rename_all = "snake_case")
+)]
+pub enum AccelerationFallbackReason {
+    /// The application did not register any hardware provider.
+    NoProviderInstalled,
+    /// Providers were present but exposed no matching device.
+    NoCompatibleDevice,
+    /// Devices were present but exposed no capabilities.
+    UnsupportedOperation,
+    /// No capability implemented the requested codec.
+    UnsupportedCodec,
+    /// The codec was present but not with the requested external format.
+    UnsupportedFormat,
+    /// The format was present but not for encode/decode as requested.
+    UnsupportedDirection,
+    /// The operation was present but not at the requested compression level.
+    UnsupportedLevel,
+    /// A matching capability exists but is not yet eligible for `Auto`.
+    ExperimentalCapability,
+    /// Device discovery or capability probing failed for a provider.
+    ProviderDiscoveryFailed {
+        /// Stable provider identifier.
+        provider_id: String,
+    },
+    /// A matching provider failed while opening an execution session.
+    ProviderInitializationFailed {
+        /// Stable provider identifier.
+        provider_id: String,
+    },
+    /// A selected provider failed and the file operation succeeded on CPU.
+    ProviderExecutionFailedCpuRetry {
+        /// Stable provider identifier reported by the failed session.
+        provider_id: String,
+    },
+    /// The explicitly selected provider/device was not usable.
+    ExplicitTargetUnavailable {
+        /// `PROVIDER:DEVICE-ID` selector supplied by the caller.
+        target: String,
+    },
+}
+
 /// Stability level of an accelerator capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityMaturity {
@@ -114,6 +197,15 @@ pub struct AcceleratorDevice {
     pub device_id: String,
     /// Human-readable device name.
     pub name: String,
+}
+
+/// One provider-reported diagnostic property for an accelerator device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceleratorDeviceProperty {
+    /// Stable machine-readable property name.
+    pub key: String,
+    /// Human-readable property value.
+    pub value: String,
 }
 
 /// One exact operation supported by an accelerator device.
@@ -224,6 +316,17 @@ pub trait AcceleratorProvider: Send + Sync {
     /// discovery fails.
     fn devices(&self) -> Result<Vec<AcceleratorDevice>>;
 
+    /// Return provider-specific diagnostic properties for one device.
+    ///
+    /// Properties are informational and must not be used as the capability
+    /// contract. Providers may return an empty list.
+    fn device_properties(
+        &self,
+        _device: &AcceleratorDevice,
+    ) -> Result<Vec<AcceleratorDeviceProperty>> {
+        Ok(Vec::new())
+    }
+
     /// Return exact capabilities for a discovered device.
     ///
     /// # Errors
@@ -302,6 +405,7 @@ impl ProviderRegistry {
 pub(crate) struct Selection {
     pub(crate) backend: ProcessingBackend,
     pub(crate) notice: Option<String>,
+    pub(crate) fallback_reason: Option<AccelerationFallbackReason>,
     pub(crate) block_encoder: Option<Box<dyn BlockEncoderSession>>,
 }
 
@@ -309,6 +413,7 @@ pub(crate) struct Selection {
 pub(crate) fn select(
     registry: &ProviderRegistry,
     preference: AccelerationPreference,
+    target: Option<&AcceleratorTarget>,
     direction: Direction,
     format: Format,
     level: Option<Level>,
@@ -317,30 +422,66 @@ pub(crate) fn select(
         return Ok(Selection {
             backend: ProcessingBackend::Cpu,
             notice: None,
+            fallback_reason: None,
             block_encoder: None,
         });
     }
 
     let mut experimental_match = false;
+    let mut matching_provider = false;
+    let mut matching_device = false;
+    let mut saw_capability = false;
+    let mut matching_codec = false;
+    let mut matching_format = false;
+    let mut matching_direction = false;
+    let mut matching_level = false;
+    let mut discovery_failure: Option<(String, String)> = None;
     for provider in registry.providers() {
+        let descriptor = provider.descriptor();
+        if target.is_some_and(|target| target.provider_id != descriptor.id) {
+            continue;
+        }
+        matching_provider = true;
         let devices = match provider.devices() {
             Ok(devices) => devices,
             Err(error) if preference == AccelerationPreference::Auto => {
-                let _ = error;
+                discovery_failure.get_or_insert_with(|| (descriptor.id.clone(), error.to_string()));
                 continue;
             }
             Err(error) => return Err(error),
         };
         for device in devices {
+            if target.is_some_and(|target| target.device_id != device.device_id) {
+                continue;
+            }
+            matching_device = true;
             let capabilities = match provider.capabilities(&device) {
                 Ok(capabilities) => capabilities,
                 Err(error) if preference == AccelerationPreference::Auto => {
-                    let _ = error;
+                    discovery_failure
+                        .get_or_insert_with(|| (descriptor.id.clone(), error.to_string()));
                     continue;
                 }
                 Err(error) => return Err(error),
             };
             for capability in capabilities {
+                saw_capability = true;
+                if format.codec != Some(capability.codec) {
+                    continue;
+                }
+                matching_codec = true;
+                if capability.format != format {
+                    continue;
+                }
+                matching_format = true;
+                if capability.direction != direction {
+                    continue;
+                }
+                matching_direction = true;
+                if level.is_some_and(|level| !capability.levels.contains(&level)) {
+                    continue;
+                }
+                matching_level = true;
                 let request = AccelerationRequest {
                     device_id: device.device_id.clone(),
                     format,
@@ -357,7 +498,6 @@ pub(crate) fn select(
                     continue;
                 }
 
-                let descriptor = provider.descriptor();
                 let block_encoder = match provider.open_block_encoder(&request) {
                     Ok(encoder) => encoder,
                     Err(error) if preference == AccelerationPreference::Auto => {
@@ -367,6 +507,11 @@ pub(crate) fn select(
                                 "{} failed to initialize for {format} {direction}: {error}; using CPU",
                                 descriptor.name
                             )),
+                            fallback_reason: Some(
+                                AccelerationFallbackReason::ProviderInitializationFailed {
+                                    provider_id: descriptor.id,
+                                },
+                            ),
                             block_encoder: None,
                         });
                     }
@@ -378,6 +523,7 @@ pub(crate) fn select(
                         descriptor.id, device.device_id
                     )),
                     notice: None,
+                    fallback_reason: None,
                     block_encoder: Some(block_encoder),
                 });
             }
@@ -386,20 +532,59 @@ pub(crate) fn select(
 
     if preference == AccelerationPreference::Required {
         return Err(Error::AccelerationUnavailable {
-            reason: unavailable_message(direction, format, level),
+            reason: target.map_or_else(
+                || unavailable_message(direction, format, level),
+                |target| {
+                    format!(
+                        "requested accelerator `{target}` is unavailable or incompatible with {format} {direction}"
+                    )
+                },
+            ),
         });
     }
 
-    let notice = if experimental_match {
-        format!(
-            "a compatible experimental accelerator exists for {format} {direction}, but automatic selection requires a supported performance profile; using CPU"
+    let (notice, fallback_reason) = if experimental_match {
+        (
+            format!(
+                "a compatible experimental accelerator exists for {format} {direction}, but automatic selection requires a supported performance profile; using CPU"
+            ),
+            AccelerationFallbackReason::ExperimentalCapability,
+        )
+    } else if let Some((provider_id, error)) = discovery_failure {
+        (
+            format!(
+                "hardware provider `{provider_id}` could not discover or probe a compatible device: {error}; using CPU"
+            ),
+            AccelerationFallbackReason::ProviderDiscoveryFailed { provider_id },
         )
     } else {
-        unavailable_message(direction, format, level)
+        let reason = if let Some(target) = target {
+            AccelerationFallbackReason::ExplicitTargetUnavailable {
+                target: target.to_string(),
+            }
+        } else if registry.providers().is_empty() {
+            AccelerationFallbackReason::NoProviderInstalled
+        } else if !matching_provider || !matching_device {
+            AccelerationFallbackReason::NoCompatibleDevice
+        } else if !saw_capability {
+            AccelerationFallbackReason::UnsupportedOperation
+        } else if !matching_codec {
+            AccelerationFallbackReason::UnsupportedCodec
+        } else if !matching_format {
+            AccelerationFallbackReason::UnsupportedFormat
+        } else if !matching_direction {
+            AccelerationFallbackReason::UnsupportedDirection
+        } else if !matching_level {
+            AccelerationFallbackReason::UnsupportedLevel
+        } else {
+            AccelerationFallbackReason::UnsupportedOperation
+        };
+        (unavailable_message(direction, format, level), reason)
     };
     Ok(Selection {
         backend: ProcessingBackend::Cpu,
         notice: Some(notice),
+        fallback_reason: Some(fallback_reason),
         block_encoder: None,
     })
 }
@@ -421,6 +606,10 @@ mod tests {
     struct FakeProvider {
         name: &'static str,
     }
+
+    struct DiscoveryFailureProvider;
+
+    struct InitializationFailureProvider;
 
     impl AcceleratorProvider for FakeProvider {
         fn descriptor(&self) -> ProviderDescriptor {
@@ -461,6 +650,71 @@ mod tests {
         }
     }
 
+    impl AcceleratorProvider for DiscoveryFailureProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: "discovery-failure".to_owned(),
+                name: "Discovery failure".to_owned(),
+            }
+        }
+
+        fn devices(&self) -> Result<Vec<AcceleratorDevice>> {
+            Err(Error::AccelerationUnavailable {
+                reason: "simulated driver discovery failure".to_owned(),
+            })
+        }
+
+        fn capabilities(&self, _device: &AcceleratorDevice) -> Result<Vec<AcceleratorCapability>> {
+            unreachable!("device discovery failed")
+        }
+
+        fn open_block_encoder(
+            &self,
+            _request: &AccelerationRequest,
+        ) -> Result<Box<dyn BlockEncoderSession>> {
+            unreachable!("device discovery failed")
+        }
+    }
+
+    impl AcceleratorProvider for InitializationFailureProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                id: "initialization-failure".to_owned(),
+                name: "Initialization failure".to_owned(),
+            }
+        }
+
+        fn devices(&self) -> Result<Vec<AcceleratorDevice>> {
+            Ok(vec![AcceleratorDevice {
+                provider_id: "initialization-failure".to_owned(),
+                device_id: "device-1".to_owned(),
+                name: "Fake GPU".to_owned(),
+            }])
+        }
+
+        fn capabilities(&self, device: &AcceleratorDevice) -> Result<Vec<AcceleratorCapability>> {
+            Ok(vec![AcceleratorCapability {
+                provider_id: device.provider_id.clone(),
+                device_id: device.device_id.clone(),
+                codec: Codec::Lz4,
+                format: Format::codec(Codec::Lz4),
+                direction: Direction::Encode,
+                levels: vec![Level::Fast],
+                block_size: 64 * 1024,
+                maturity: CapabilityMaturity::Supported,
+            }])
+        }
+
+        fn open_block_encoder(
+            &self,
+            _request: &AccelerationRequest,
+        ) -> Result<Box<dyn BlockEncoderSession>> {
+            Err(Error::AccelerationUnavailable {
+                reason: "simulated device initialization failure".to_owned(),
+            })
+        }
+    }
+
     #[test]
     fn preference_aliases_parse() {
         assert_eq!("auto".parse(), Ok(AccelerationPreference::Auto));
@@ -470,10 +724,22 @@ mod tests {
     }
 
     #[test]
+    fn accelerator_target_parses_provider_and_colon_rich_device_id() {
+        let target: AcceleratorTarget = "wgpu:metal:106b:0000:0".parse().unwrap();
+        assert_eq!(target.provider_id, "wgpu");
+        assert_eq!(target.device_id, "metal:106b:0000:0");
+        assert_eq!(target.to_string(), "wgpu:metal:106b:0000:0");
+        assert!("wgpu".parse::<AcceleratorTarget>().is_err());
+        assert!(":device".parse::<AcceleratorTarget>().is_err());
+        assert!("wgpu:".parse::<AcceleratorTarget>().is_err());
+    }
+
+    #[test]
     fn auto_falls_back_observably() {
         let selection = select(
             &ProviderRegistry::new(),
             AccelerationPreference::Auto,
+            None,
             Direction::Encode,
             Format::codec(Codec::Gzip),
             Some(Level::Best),
@@ -481,6 +747,120 @@ mod tests {
         .unwrap();
         assert_eq!(selection.backend, ProcessingBackend::Cpu);
         assert!(selection.notice.unwrap().contains("gzip"));
+        assert_eq!(
+            selection.fallback_reason,
+            Some(AccelerationFallbackReason::NoProviderInstalled)
+        );
+    }
+
+    #[test]
+    fn auto_reports_an_experimental_capability_structurally() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider { name: "fake" }));
+        let selection = select(
+            &registry,
+            AccelerationPreference::Auto,
+            None,
+            Direction::Encode,
+            Format::codec(Codec::Lz4),
+            Some(Level::Fast),
+        )
+        .unwrap();
+        assert_eq!(selection.backend, ProcessingBackend::Cpu);
+        assert_eq!(
+            selection.fallback_reason,
+            Some(AccelerationFallbackReason::ExperimentalCapability)
+        );
+    }
+
+    #[test]
+    fn auto_distinguishes_unsupported_operation_dimensions() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider { name: "fake" }));
+        let cases = [
+            (
+                Direction::Encode,
+                Format::codec(Codec::Gzip),
+                Some(Level::Fast),
+                AccelerationFallbackReason::UnsupportedCodec,
+            ),
+            (
+                Direction::Encode,
+                Format::layered(crate::Container::Tar, Codec::Lz4),
+                Some(Level::Fast),
+                AccelerationFallbackReason::UnsupportedFormat,
+            ),
+            (
+                Direction::Decode,
+                Format::codec(Codec::Lz4),
+                None,
+                AccelerationFallbackReason::UnsupportedDirection,
+            ),
+            (
+                Direction::Encode,
+                Format::codec(Codec::Lz4),
+                Some(Level::Best),
+                AccelerationFallbackReason::UnsupportedLevel,
+            ),
+        ];
+
+        for (direction, format, level, expected) in cases {
+            let selection = select(
+                &registry,
+                AccelerationPreference::Auto,
+                None,
+                direction,
+                format,
+                level,
+            )
+            .unwrap();
+            assert_eq!(selection.fallback_reason, Some(expected));
+        }
+    }
+
+    #[test]
+    fn auto_reports_provider_discovery_failure_structurally() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(DiscoveryFailureProvider));
+        let selection = select(
+            &registry,
+            AccelerationPreference::Auto,
+            None,
+            Direction::Encode,
+            Format::codec(Codec::Lz4),
+            Some(Level::Fast),
+        )
+        .unwrap();
+        assert_eq!(selection.backend, ProcessingBackend::Cpu);
+        assert_eq!(
+            selection.fallback_reason,
+            Some(AccelerationFallbackReason::ProviderDiscoveryFailed {
+                provider_id: "discovery-failure".to_owned(),
+            })
+        );
+        assert!(selection.notice.unwrap().contains("simulated driver"));
+    }
+
+    #[test]
+    fn auto_reports_provider_initialization_failure_structurally() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(InitializationFailureProvider));
+        let selection = select(
+            &registry,
+            AccelerationPreference::Auto,
+            None,
+            Direction::Encode,
+            Format::codec(Codec::Lz4),
+            Some(Level::Fast),
+        )
+        .unwrap();
+        assert_eq!(selection.backend, ProcessingBackend::Cpu);
+        assert_eq!(
+            selection.fallback_reason,
+            Some(AccelerationFallbackReason::ProviderInitializationFailed {
+                provider_id: "initialization-failure".to_owned(),
+            })
+        );
     }
 
     #[test]
@@ -488,11 +868,33 @@ mod tests {
         let result = select(
             &ProviderRegistry::new(),
             AccelerationPreference::Required,
+            None,
             Direction::Decode,
             Format::codec(Codec::Zstd),
             None,
         );
         assert!(matches!(result, Err(Error::AccelerationUnavailable { .. })));
+    }
+
+    #[test]
+    fn required_reports_an_explicit_target_that_does_not_exist() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider { name: "fake" }));
+        let target = AcceleratorTarget {
+            provider_id: "fake".to_owned(),
+            device_id: "missing-device".to_owned(),
+        };
+        let error = select(
+            &registry,
+            AccelerationPreference::Required,
+            Some(&target),
+            Direction::Encode,
+            Format::codec(Codec::Lz4),
+            Some(Level::Fast),
+        )
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("fake:missing-device"));
     }
 
     #[test]
