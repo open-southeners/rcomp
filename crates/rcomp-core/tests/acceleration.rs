@@ -128,7 +128,7 @@ impl AcceleratorProvider for FailingBlockProvider {
             direction: Direction::Encode,
             levels: vec![Level::Fast],
             block_size: 65_536,
-            maturity: CapabilityMaturity::Experimental,
+            maturity: CapabilityMaturity::Supported,
         }])
     }
 
@@ -264,6 +264,52 @@ fn accelerated_failure_preserves_existing_output_and_removes_staging_file() {
 
     assert!(matches!(error, Error::AccelerationFailed { .. }));
     assert_eq!(fs::read(&output).unwrap(), sentinel);
+    assert_no_staged_outputs(temp.path());
+}
+
+#[test]
+fn auto_retries_a_failed_accelerator_on_cpu_before_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input.txt");
+    let output = temp.path().join("output.lz4");
+    let contents = vec![b'x'; 70_000];
+    fs::write(&input, &contents).unwrap();
+
+    let mut registry = ProviderRegistry::new();
+    registry.register(Arc::new(FailingBlockProvider));
+    let engine = Engine::with_registry(registry);
+    let report = engine
+        .compress(
+            &input,
+            &output,
+            &CompressOptions {
+                level: Level::Fast,
+                acceleration: AccelerationPreference::Auto,
+                ..Default::default()
+            },
+            |_| {},
+        )
+        .unwrap();
+
+    assert_eq!(report.backend, ProcessingBackend::Cpu);
+    assert_eq!(
+        report.acceleration_fallback,
+        Some(
+            AccelerationFallbackReason::ProviderExecutionFailedCpuRetry {
+                provider_id: "failing-test".to_owned(),
+            }
+        )
+    );
+    assert!(
+        report
+            .acceleration_notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("retried successfully on CPU"))
+    );
+    let mut decoder = lz4::Decoder::new(fs::File::open(&output).unwrap()).unwrap();
+    let mut decoded = Vec::new();
+    decoder.read_to_end(&mut decoded).unwrap();
+    assert_eq!(decoded, contents);
     assert_no_staged_outputs(temp.path());
 }
 
