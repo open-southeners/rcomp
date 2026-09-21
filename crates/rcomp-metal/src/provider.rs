@@ -4,6 +4,9 @@ use rcomp_core::{
     Error as CoreError, Format, Level, ProviderDescriptor,
 };
 
+#[cfg(target_os = "macos")]
+use objc2::rc::autoreleasepool;
+
 use crate::{MetalDeviceInfo, MetalError, Result, default_device_info};
 
 const PROVIDER_ID: &str = "metal";
@@ -116,7 +119,12 @@ impl AcceleratorProvider for MetalProvider {
 
         #[cfg(target_os = "macos")]
         {
-            let encoder = crate::macos::MetalLz4BlockEncoder::new().map_err(core_failure)?;
+            // Core creates sessions on its accelerator worker. Give that
+            // background thread an explicit pool while Objective-C/Metal
+            // factories create temporary autoreleased objects; retained
+            // session resources safely outlive the pool.
+            let encoder = autoreleasepool(|_| crate::macos::MetalLz4BlockEncoder::new())
+                .map_err(core_failure)?;
             Ok(Box::new(MetalBlockEncoder(encoder)))
         }
 
@@ -148,7 +156,10 @@ impl BlockEncoderSession for MetalBlockEncoder {
         if cancel.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
-        let blocks = self.0.compress_blocks(input).map_err(core_failure)?;
+        // The bridge reuses this worker for many batches, so scope temporary
+        // Objective-C objects to one dispatch instead of relying on a
+        // process/main-thread autorelease pool.
+        let blocks = autoreleasepool(|_| self.0.compress_blocks(input)).map_err(core_failure)?;
         // Metal command buffers cannot be cancelled after commit. The native
         // call waits synchronously so all retained resources remain alive,
         // then this check discards completed output when cancellation arrived
