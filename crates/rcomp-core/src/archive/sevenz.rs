@@ -46,7 +46,10 @@ use sevenz_rust2::{
 
 use crate::{Error, Level, Result, progress::Entry, walk::WalkEntry};
 
-use super::{OpCtx, sanitize::sanitize_entry_path};
+use super::{
+    OpCtx,
+    sanitize::{prepare_dir, prepare_leaf, sanitize_entry_path},
+};
 
 // ---------------------------------------------------------------------------
 // Level → LZMA2 preset integer
@@ -364,7 +367,7 @@ pub(crate) fn extract(
         let out_path = sanitize_entry_path(dest, raw_path)?;
         ctx.set_entry(raw_name);
         ctx.check_cancel()?;
-        fs::create_dir_all(&out_path)?;
+        prepare_dir(dest, &out_path)?;
         count += 1;
     }
 
@@ -403,17 +406,10 @@ pub(crate) fn extract(
                 }
             };
 
-            // Ensure parent directory exists (in case it was not a separate entry).
-            if let Some(parent) = out_path.parent()
-                && let Err(e) = fs::create_dir_all(parent)
-            {
-                file_error = Some(Error::Io(e));
-                return Ok(false);
-            }
-
-            // Overwrite check.
-            if !overwrite && out_path.exists() {
-                file_error = Some(Error::AlreadyExists { path: out_path });
+            // Create parent directories and handle an existing entry, never
+            // writing through a symlink.
+            if let Err(e) = prepare_leaf(&dest_path, &out_path, overwrite) {
+                file_error = Some(e);
                 return Ok(false);
             }
 

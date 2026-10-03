@@ -8,11 +8,20 @@
 //! All resolved paths **must** remain inside `dest`.  Any entry or link target
 //! that would escape `dest` is rejected with [`Error::PathTraversal`].
 //!
-//! The check is **lexical** — no filesystem I/O is performed — so it is safe
-//! to call before creating any files.  This means the sanitizer is conservative:
-//! it rejects paths that a real filesystem with symlinks might allow, but it
-//! can never be fooled by dangling symlinks or TOCTOU races.
+//! [`sanitize_entry_path`] and [`sanitize_link_target`] are **lexical** — no
+//! filesystem I/O is performed — so they are safe to call before creating any
+//! files.  A lexical check alone cannot see symlinks already on disk, though:
+//! an archive can plant `d/up -> ..` and `s -> d/up/..` (each lexically
+//! inside `dest`) and then write `s/file`, landing outside `dest`.  The
+//! filesystem guards [`prepare_dir`] and [`prepare_leaf`] close that gap by
+//! refusing to create anything *through* a symlink below `dest`, so backends
+//! must call them before every write.
+//!
+//! [`safe_mode`] strips setuid/setgid/sticky bits from archive-supplied
+//! permissions.
 
+use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::{Error, Result};
@@ -189,6 +198,95 @@ pub(crate) fn sanitize_link_target(dest: &Path, link_path: &Path, target: &Path)
             entry: target.to_path_buf(),
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem guards
+// ---------------------------------------------------------------------------
+
+/// Reject `path` if it, or any directory between `dest` and it, is an
+/// existing symlink.
+///
+/// `dest` itself is trusted (the caller chose it).  Components that do not
+/// exist yet are fine: they will be created as real directories.
+///
+/// # Errors
+///
+/// Returns [`Error::PathTraversal`] if a symlink is found or `path` is not
+/// under `dest`, or [`Error::Io`] if a component cannot be inspected.
+pub(crate) fn reject_symlinks_below(dest: &Path, path: &Path) -> Result<()> {
+    let rel = path.strip_prefix(dest).map_err(|_| Error::PathTraversal {
+        entry: path.to_path_buf(),
+    })?;
+    let mut current = dest.to_path_buf();
+    for component in rel.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::PathTraversal {
+                    entry: rel.to_path_buf(),
+                });
+            }
+            Ok(_) => {}
+            // Nothing deeper can exist either.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Create the directory for a directory entry at `out_path` (already
+/// sanitized), without following any symlink below `dest`.
+///
+/// # Errors
+///
+/// Returns [`Error::PathTraversal`] if `out_path` or one of its ancestors
+/// below `dest` is a symlink, or [`Error::Io`] if creation fails.
+pub(crate) fn prepare_dir(dest: &Path, out_path: &Path) -> Result<()> {
+    reject_symlinks_below(dest, out_path)?;
+    fs::create_dir_all(out_path)?;
+    Ok(())
+}
+
+/// Get `out_path` (already sanitized) ready for a new file, symlink, or hard
+/// link: create its parent directories and deal with anything already there.
+///
+/// Never writes through a symlink: ancestors below `dest` must be real
+/// directories, and an existing symlink at `out_path` itself is replaced
+/// (with `overwrite`) rather than followed.  With `overwrite`, any existing
+/// non-directory is removed so the caller creates a fresh inode; an existing
+/// directory is left for the caller's create call to fail on.
+///
+/// # Errors
+///
+/// Returns [`Error::PathTraversal`] if an ancestor below `dest` is a symlink,
+/// [`Error::AlreadyExists`] if something exists at `out_path` and `overwrite`
+/// is false, or [`Error::Io`] on filesystem failure.
+pub(crate) fn prepare_leaf(dest: &Path, out_path: &Path, overwrite: bool) -> Result<()> {
+    if let Some(parent) = out_path.parent() {
+        reject_symlinks_below(dest, parent)?;
+        fs::create_dir_all(parent)?;
+    }
+    match fs::symlink_metadata(out_path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(_) if !overwrite => Err(Error::AlreadyExists {
+            path: out_path.to_path_buf(),
+        }),
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => {
+            fs::remove_file(out_path)?;
+            Ok(())
+        }
+    }
+}
+
+/// Permission bits that extraction may apply from an archive: `rwx` for
+/// user/group/other only.  Setuid, setgid, and sticky bits from an untrusted
+/// archive are dropped.
+pub(crate) fn safe_mode(mode: u32) -> u32 {
+    mode & 0o777
 }
 
 // ---------------------------------------------------------------------------
