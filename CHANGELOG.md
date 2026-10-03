@@ -65,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from
   `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of
   silently stopping after the first stream.
+- Extracting with overwrite enabled now replaces existing symlinks and hard
+  links in the destination instead of failing with "already exists".
+
+### Security
+
+- Extraction no longer writes through symlinks: an archive can't chain its own
+  symlinks, or reuse ones already in the destination, to place files outside
+  the extraction folder. Such archives are rejected with a path-traversal
+  error, and an existing symlink at an output path is treated as existing (or
+  replaced with overwrite enabled) rather than followed.
+- Extracted files and directories no longer keep setuid, setgid, or sticky
+  bits from the archive; only the regular read/write/execute permissions are
+  restored.
 
 ## [0.3.3] - 2026-09-11
 
