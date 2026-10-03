@@ -92,9 +92,10 @@ pub(crate) fn encoder<'a>(
 
 /// Create an xz decoder reading compressed input from `r`.
 ///
-/// Uses [`XzDecoder`] which auto-detects the stream format (xz or lzma).
+/// Uses [`XzDecoder::new_multi_decoder`], which auto-detects the stream format
+/// (xz or lzma) and decodes every concatenated stream, not just the first.
 pub(crate) fn decoder<'a>(r: Box<dyn Read + 'a>) -> crate::Result<Box<dyn Read + 'a>> {
-    Ok(Box::new(XzDecoder::new(r)))
+    Ok(Box::new(XzDecoder::new_multi_decoder(r)))
 }
 
 // ---------------------------------------------------------------------------
@@ -124,5 +125,10 @@ mod tests {
     #[test]
     fn corrupt_xz() {
         test_util::corrupt(Codec::Xz);
+    }
+
+    #[test]
+    fn concatenated_streams() {
+        test_util::concatenated(Codec::Xz);
     }
 }

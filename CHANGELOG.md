@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit Objective-C autorelease pool; the complete native Metal hardware
   suite passes on the M3 Max with that lifecycle policy.
 
+### Fixed
+
+- Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from
+  `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of
+  silently stopping after the first stream.
+
 ## [0.3.3] - 2026-09-11
 
 ### Changed

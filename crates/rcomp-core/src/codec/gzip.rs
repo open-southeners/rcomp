@@ -142,4 +142,9 @@ mod tests {
 
         assert_eq!(out, b"hello world");
     }
+
+    #[test]
+    fn concatenated_streams() {
+        test_util::concatenated(Codec::Gzip);
+    }
 }
