@@ -127,4 +127,9 @@ mod tests {
     fn corrupt_zstd() {
         test_util::corrupt(Codec::Zstd);
     }
+
+    #[test]
+    fn concatenated_streams() {
+        test_util::concatenated(Codec::Zstd);
+    }
 }

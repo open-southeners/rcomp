@@ -1,14 +1,15 @@
 //! Bzip2 codec backend.
 //!
 //! Encoding uses [`bzip2::write::BzEncoder`]; decoding uses
-//! [`bzip2::read::BzDecoder`].
+//! [`bzip2::read::MultiBzDecoder`], so concatenated streams (as written by
+//! `pbzip2`/`lbzip2`) decode in full.
 //!
 //! Level mapping: Fast → 1, Best → 6, Edge → 9.
 
 use std::io::{Read, Write};
 
 use bzip2::Compression;
-use bzip2::read::BzDecoder;
+use bzip2::read::MultiBzDecoder;
 use bzip2::write::BzEncoder;
 
 use crate::Level;
@@ -69,7 +70,7 @@ pub(crate) fn encoder<'a>(
 
 /// Create a bzip2 decoder reading compressed input from `r`.
 pub(crate) fn decoder<'a>(r: Box<dyn Read + 'a>) -> crate::Result<Box<dyn Read + 'a>> {
-    Ok(Box::new(BzDecoder::new(r)))
+    Ok(Box::new(MultiBzDecoder::new(r)))
 }
 
 // ---------------------------------------------------------------------------
@@ -99,5 +100,10 @@ mod tests {
     #[test]
     fn corrupt_bzip2() {
         test_util::corrupt(Codec::Bzip2);
+    }
+
+    #[test]
+    fn concatenated_streams() {
+        test_util::concatenated(Codec::Bzip2);
     }
 }
