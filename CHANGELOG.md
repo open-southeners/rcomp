@@ -78,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-root archive.
 - Checksum files with uppercase digests (as written by PowerShell
   `Get-FileHash` or `certutil`) now verify instead of reporting a mismatch.
+- A failed or cancelled compress no longer truncates or deletes the existing
+  output when overwriting, and never leaves a partial archive behind;
+  single-file extraction (e.g. `.gz` to a file) likewise keeps the existing
+  file intact and leaves nothing behind on error.
 - The CLI progress line no longer crashes on long entry names containing
   non-ASCII characters.
 
