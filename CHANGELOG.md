@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extracted files and directories no longer keep setuid, setgid, or sticky
   bits from the archive; only the regular read/write/execute permissions are
   restored.
+- The desktop app now enforces a strict Content Security Policy, so content
+  shown in the window can't load remote resources or run injected scripts.
 
 ## [0.3.3] - 2026-09-11
 
