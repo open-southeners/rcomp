@@ -8,7 +8,6 @@ readme = "README.md"
 rust-version = "1.87"
 keywords.workspace = true
 categories = ["compression"]
-publish = false
 
 [[example]]
 name = "wgpu-lz4"
