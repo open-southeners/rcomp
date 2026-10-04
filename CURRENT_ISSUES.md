@@ -280,6 +280,27 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `cfg` as their users. Consider a Windows CLI cancel test that sends a real
   `CTRL_C_EVENT` from a helper process on a private console.
 
+- **Where:** `crates/rcomp-core/src/acceleration.rs` (explicit-target branch of
+  selection, `requested accelerator … is unavailable or incompatible`)
+  **What:** Found during the Linux/Intel NUC qualification. With
+  `--accelerator-device` set, the explicit-target check runs before the
+  level/direction checks. As a result `--accelerator required --best` on the
+  real, present Intel device prints exactly the same error as an invented
+  device ID. Neither message says the device exists but only supports `Fast`.
+  **Fix:** When the target device matches but its capability does not, report
+  the specific reason (unsupported level/direction), e.g. "`wgpu:vulkan:…`
+  supports lz4 encoding only at Fast level". Keep "not found" for IDs that
+  match no device. Add a test for each.
+
+- **Where:** `crates/rcomp-core/src/acceleration.rs` (`unavailable_message`)
+  **What:** Its message ends "…; using the CPU is the only supported path on
+  this system". That suffix is right for an `auto` fallback, but the same text
+  is the `required` hard error. Seen on `rcomp x.lz4 out --accelerator required`
+  (exit 1, no CPU run), where it reads as though the CPU was used.
+  **Fix:** Pass the preference into the message (or let the CLI add the
+  suffix). For `required`, end with a hint such as "use `--accelerator auto` or
+  `cpu` to run on the CPU".
+
 
 ## Resolved
 
