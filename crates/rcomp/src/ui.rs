@@ -33,13 +33,18 @@ use rcomp_core::Progress as CoreProgress;
 /// Maximum display width for the current-entry message.
 const ENTRY_MSG_MAX: usize = 40;
 
-/// Truncate `s` so it fits in `ENTRY_MSG_MAX` columns, adding a leading `…`
-/// when the string is shortened.
+/// Truncate `s` to at most `ENTRY_MSG_MAX` characters, keeping the end and
+/// adding a leading `…` when the string is shortened.
+///
+/// Counts `char`s rather than bytes so a cut never lands inside a multibyte
+/// character (entry names are arbitrary UTF-8).
 fn truncate_entry(s: &str) -> String {
-    if s.len() <= ENTRY_MSG_MAX {
+    let len = s.chars().count();
+    if len <= ENTRY_MSG_MAX {
         s.to_owned()
     } else {
-        format!("…{}", &s[s.len() - (ENTRY_MSG_MAX - 1)..])
+        let tail: String = s.chars().skip(len - (ENTRY_MSG_MAX - 1)).collect();
+        format!("…{tail}")
     }
 }
 
@@ -142,5 +147,34 @@ pub fn build(quiet: bool) -> Progress {
     Progress {
         callback,
         guard: ProgressGuard(guard_bar),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ENTRY_MSG_MAX, truncate_entry};
+
+    #[test]
+    fn short_entry_is_unchanged() {
+        assert_eq!(truncate_entry("src/main.rs"), "src/main.rs");
+    }
+
+    #[test]
+    fn long_ascii_entry_keeps_the_tail() {
+        let s = "a".repeat(30) + &"b".repeat(30);
+        let out = truncate_entry(&s);
+        assert_eq!(out.chars().count(), ENTRY_MSG_MAX);
+        assert!(out.starts_with('…') && out.ends_with(&"b".repeat(30)));
+    }
+
+    #[test]
+    fn long_multibyte_entry_does_not_panic() {
+        // Every cut position by byte count would land inside a character.
+        for prefix in 0..4 {
+            let s = "x".repeat(prefix) + &"写真/".repeat(20) + "ファイル.txt";
+            let out = truncate_entry(&s);
+            assert_eq!(out.chars().count(), ENTRY_MSG_MAX);
+            assert!(out.ends_with("ファイル.txt"));
+        }
     }
 }
