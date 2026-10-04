@@ -92,6 +92,16 @@ pub(crate) fn sanitize_entry_path(dest: &Path, entry: &Path) -> Result<PathBuf> 
     Ok(result)
 }
 
+/// Whether `entry` names the archive root itself (`.`, `./`, or empty).
+///
+/// Tools such as `tar -C dir -czf x.tgz .` emit a leading `./` directory entry.
+/// A directory entry for the root carries nothing to create, so backends skip
+/// it instead of passing it to [`sanitize_entry_path`] (which rejects it,
+/// because a *file* entry with that name would resolve to `dest` itself).
+pub(crate) fn is_root_entry(entry: &Path) -> bool {
+    entry.components().all(|c| c == Component::CurDir)
+}
+
 // ---------------------------------------------------------------------------
 // Symlink-target sanitization
 // ---------------------------------------------------------------------------

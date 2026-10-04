@@ -44,7 +44,7 @@ use crate::{Result, progress::Entry};
 
 use super::{
     OpCtx,
-    sanitize::{prepare_dir, prepare_leaf, sanitize_entry_path},
+    sanitize::{is_root_entry, prepare_dir, prepare_leaf, sanitize_entry_path},
 };
 
 // ---------------------------------------------------------------------------
@@ -117,6 +117,11 @@ pub(crate) fn extract(
         let raw_filename: PathBuf = header.entry().filename.clone();
         let unpacked_size: u64 = header.entry().unpacked_size;
         let is_directory: bool = header.entry().is_directory();
+
+        if is_directory && is_root_entry(&raw_filename) {
+            open = header.skip().map_err(|e| io::Error::other(e.to_string()))?;
+            continue;
+        }
 
         // Sanitize the raw path first.
         let out_path = sanitize_entry_path(dest, &raw_filename)?;

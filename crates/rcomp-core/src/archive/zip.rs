@@ -38,7 +38,10 @@ use crate::{
 
 use super::{
     OpCtx,
-    sanitize::{prepare_dir, prepare_leaf, safe_mode, sanitize_entry_path, sanitize_link_target},
+    sanitize::{
+        is_root_entry, prepare_dir, prepare_leaf, safe_mode, sanitize_entry_path,
+        sanitize_link_target,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -367,6 +370,9 @@ pub(crate) fn extract(
         // Sanitize the raw entry path using OUR sanitizer — do not rely solely
         // on the zip crate's enclosed_name which silently drops `..` components.
         let raw_path = Path::new(&raw_name);
+        if is_dir && is_root_entry(raw_path) {
+            continue;
+        }
         let out_path = sanitize_entry_path(dest, raw_path)?;
 
         ctx.set_entry(&raw_name);
@@ -1006,5 +1012,18 @@ mod tests {
         };
         assert_eq!(mode("d"), 0o755);
         assert_eq!(mode("d/suid"), 0o755);
+    }
+
+    #[test]
+    fn dot_root_directory_entry_is_skipped() {
+        let dest = TempDir::new().unwrap();
+        extract_crafted(dest.path(), |zip| {
+            let options = SimpleFileOptions::default();
+            zip.add_directory("./", options).unwrap();
+            zip.start_file("./a.txt", options).unwrap();
+            zip.write_all(b"a").unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(dest.path().join("a.txt")).unwrap(), b"a");
     }
 }

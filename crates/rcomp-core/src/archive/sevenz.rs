@@ -48,7 +48,7 @@ use crate::{Error, Level, Result, progress::Entry, walk::WalkEntry};
 
 use super::{
     OpCtx,
-    sanitize::{prepare_dir, prepare_leaf, sanitize_entry_path},
+    sanitize::{is_root_entry, prepare_dir, prepare_leaf, sanitize_entry_path},
 };
 
 // ---------------------------------------------------------------------------
@@ -364,6 +364,9 @@ pub(crate) fn extract(
             continue;
         }
         let raw_path = Path::new(raw_name.as_str());
+        if is_root_entry(raw_path) {
+            continue;
+        }
         let out_path = sanitize_entry_path(dest, raw_path)?;
         ctx.set_entry(raw_name);
         ctx.check_cancel()?;

@@ -268,13 +268,14 @@ pub fn distinct_roots(entries: &[crate::Entry]) -> usize {
     use std::collections::HashSet;
     let mut roots: HashSet<&str> = HashSet::new();
     for entry in entries {
-        if let Some(first) = entry.path.components().next() {
-            use std::path::Component;
-            if let Component::Normal(name) = first
-                && let Some(s) = name.to_str()
-            {
-                roots.insert(s);
-            }
+        use std::path::Component;
+        // Skip a leading `./` (as written by `tar -C dir .`) so `./a` and `a`
+        // share the root `a`; a bare `./` entry contributes no root.
+        let first = entry.path.components().find(|c| *c != Component::CurDir);
+        if let Some(Component::Normal(name)) = first
+            && let Some(s) = name.to_str()
+        {
+            roots.insert(s);
         }
     }
     roots.len()
@@ -550,6 +551,13 @@ mod tests {
     #[test]
     fn distinct_roots_empty() {
         assert_eq!(distinct_roots(&[]), 0);
+    }
+
+    #[test]
+    fn distinct_roots_dot_prefixed() {
+        // `tar -C dir -czf x.tgz .` writes `./`, `./a/...`, `./b`.
+        let entries = vec![entry("./"), entry("./a/x.txt"), entry("./b"), entry("a/y")];
+        assert_eq!(distinct_roots(&entries), 2);
     }
 
     #[test]
