@@ -418,6 +418,39 @@ fn roundtrip_verify_codec_only_succeeds() {
 }
 
 // ---------------------------------------------------------------------------
+// 5c. Uppercase expected digests (PowerShell / certutil style) still verify
+// ---------------------------------------------------------------------------
+
+#[test]
+fn uppercase_expected_digests_verify() {
+    let src = TempDir::new().unwrap();
+    make_file(src.path(), "data.bin", b"uppercase digest content");
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("data.bin.zst");
+    let dest = TempDir::new().unwrap();
+
+    let comp_opts = CompressOptions {
+        checksum: true,
+        ..Default::default()
+    };
+    let report = compress(
+        src.path().join("data.bin").as_path(),
+        &archive,
+        &comp_opts,
+        nop,
+    )
+    .expect("compress should succeed");
+
+    let ext_opts = ExtractOptions {
+        verify_sha256: report.sha256.map(|h| h.to_ascii_uppercase()),
+        verify_content_sha256: report.content_sha256.map(|h| h.to_ascii_uppercase()),
+        ..Default::default()
+    };
+    extract(&archive, dest.path(), &ext_opts, nop)
+        .expect("uppercase digests of the right bytes must verify");
+}
+
+// ---------------------------------------------------------------------------
 // 6. Flip one byte in artifact → ChecksumMismatch{kind:"artifact"}, dest empty
 // ---------------------------------------------------------------------------
 
