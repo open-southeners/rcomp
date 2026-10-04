@@ -94,6 +94,33 @@ releases. `vulkan-tools` provides `vulkaninfo`. The optional
 `intel-gpu-tools` package is useful for observing utilization, but is not part
 of the correctness gate.
 
+If the host should not gain extra packages, run `vulkaninfo` and `lz4` from
+the tool image in `qualification/` instead. rcomp and cargo still run on the
+host; only the reference tools are containerized. From the repository root,
+define these once per shell and the commands in the rest of this document work
+unchanged:
+
+```sh
+vulkaninfo() { crates/rcomp-wgpu/qualification/tools.sh vulkaninfo "$@"; }
+lz4() { crates/rcomp-wgpu/qualification/tools.sh lz4 "$@"; }
+```
+
+The wrapper builds the image on first use, from the same Ubuntu release as the
+host, and passes `/dev/dri` through. It mounts only the current directory, so
+keep the evidence directory under the repository as shown below. The host
+still needs `mesa-vulkan-drivers`, because rcomp uses the host driver.
+Container package versions are not visible to the host's `dpkg-query`, so
+record them separately:
+
+```sh
+crates/rcomp-wgpu/qualification/tools.sh \
+  dpkg-query -W mesa-vulkan-drivers vulkan-tools lz4
+```
+
+Confirm that the container's `mesa-vulkan-drivers` version matches the
+host's. Otherwise `vulkaninfo` describes a different driver than the one rcomp
+runs on.
+
 Use Rust 1.87 or newer because that is the crate's declared MSRV. Preserve
 `Cargo.lock`:
 
