@@ -39,8 +39,8 @@ use crate::{Result, progress::Entry, walk::WalkEntry};
 use super::{
     OpCtx,
     sanitize::{
-        prepare_dir, prepare_leaf, reject_symlinks_below, safe_mode, sanitize_entry_path,
-        sanitize_link_target,
+        is_root_entry, prepare_dir, prepare_leaf, reject_symlinks_below, safe_mode,
+        sanitize_entry_path, sanitize_link_target,
     },
 };
 
@@ -302,6 +302,9 @@ pub(crate) fn extract<'r>(
 
         // Retrieve the raw path from the header before processing.
         let raw_path = entry.path()?.into_owned();
+        if entry.header().entry_type().is_dir() && is_root_entry(&raw_path) {
+            continue;
+        }
         let out_path = sanitize_entry_path(dest, &raw_path)?;
 
         let entry_name = raw_path.to_string_lossy().into_owned();
@@ -1248,5 +1251,28 @@ mod tests {
         assert_eq!(mode("d"), 0o755);
         assert_eq!(mode("d/suid"), 0o755);
         assert_eq!(mode("d/sgid"), 0o755);
+    }
+
+    #[test]
+    fn dot_root_directory_entry_is_skipped() {
+        // `tar -C dir -czf x.tgz .` starts with a `./` directory entry.
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[
+            (EntryType::Directory, b"./", b"", 0o755),
+            (EntryType::Regular, b"./a.txt", b"a", 0o644),
+        ]);
+        extract_bytes(&tar_bytes, dest.path(), false).unwrap();
+        assert_eq!(std::fs::read(dest.path().join("a.txt")).unwrap(), b"a");
+    }
+
+    #[test]
+    fn dot_root_file_entry_still_rejected() {
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[(EntryType::Regular, b"./", b"x", 0o644)]);
+        let err = extract_bytes(&tar_bytes, dest.path(), false).unwrap_err();
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
+        );
     }
 }

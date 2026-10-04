@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop app: ticking "checksum" when compressing now writes the `.sha256`
   file next to the archive (it was silently skipped), and a failure to write
   it is now reported instead of ignored.
+- Tarballs with a leading `./` entry (as written by `tar -C dir -cf x.tar .`)
+  now extract instead of failing, and get a wrap folder like any other
+  multi-root archive.
 
 ### Security
 

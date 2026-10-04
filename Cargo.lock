@@ -3508,6 +3508,7 @@ dependencies = [
  "rcomp-core",
  "rcomp-metal",
  "rcomp-wgpu",
+ "tar",
  "tempfile",
 ]
 
