@@ -135,8 +135,8 @@ This repo follows a plan-driven flow. Planning docs live under `.claude/plans/`,
   graduate into `PLAN.md` only when the user answers a question or accepts a suggestion.
 - `.claude/plans/milestone-*.md` — per-milestone plans.
 - `CURRENT_ISSUES.md` — gaps/bugs/spec-questions discovered during implementation (tracked).
-- `RELEASING.md` — the crates.io release runbook (`rcomp-core` publishes before `rcomp`;
-  triggered by a tagged GitHub release).
+- `RELEASING.md` — the crates.io release runbook (publish order `rcomp-core`, `rcomp-wgpu`,
+  `rcomp-metal`, `rcomp`; triggered by a tagged GitHub release).
 
 Commits use Conventional Commits (`feat(core):`, `fix(build):`, `docs:`, `ci:`, …). Per the
 user's global rules: never add a `Co-Authored-By` or "Generated with" trailer, and never

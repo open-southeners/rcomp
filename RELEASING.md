@@ -1,15 +1,16 @@
 # Releasing rcomp
 
-This document is the authoritative runbook for publishing `rcomp-core` and
-`rcomp` to [crates.io](https://crates.io).  The automated path (GitHub Actions)
+This document is the authoritative runbook for publishing `rcomp-core`, the
+GPU provider crates `rcomp-wgpu` and `rcomp-metal`, and `rcomp` to
+[crates.io](https://crates.io).  The automated path (GitHub Actions)
 is preferred; the manual fallback is documented for emergencies.
 
 ## Prerequisites
 
 Before any release:
 
-1. **crates.io account** — you must own (or be a co-owner of) both `rcomp-core`
-   and `rcomp` on crates.io.  First-time only: run `cargo login` locally and
+1. **crates.io account** — you must own (or be a co-owner of) `rcomp-core`,
+   `rcomp-wgpu`, `rcomp-metal`, and `rcomp` on crates.io.  First-time only: run `cargo login` locally and
    follow the prompts to obtain a token.
 2. **`CARGO_REGISTRY_TOKEN` secret** — add your crates.io publish token as a
    repository secret named exactly `CARGO_REGISTRY_TOKEN` under
@@ -28,8 +29,10 @@ Before any release:
    version = "0.2.0"   # was 0.1.0
    ```
 
-   Both crates inherit this via `version.workspace = true`, so no other
-   `Cargo.toml` files need editing.
+   Every crate inherits this via `version.workspace = true`.  Also bump the
+   `version = "…"` on the internal path dependencies (`rcomp-core` in each
+   dependent crate, and `rcomp-wgpu`/`rcomp-metal` in `crates/rcomp`) so they
+   match.
 
 2. **Refresh the lockfile and commit the bump.**  `Cargo.lock` records the
    workspace members' versions, and both CI and the release workflow run
@@ -55,32 +58,29 @@ Before any release:
    automatically:
    - Verifies the tag matches `[workspace.package].version`; fails loudly on
      mismatch before touching crates.io.
-   - Dry-run-validates `rcomp-core` packaging (see the note below about
-     `rcomp`).
-   - Publishes `rcomp-core`, then waits for it to be visible in the index.
-   - Publishes `rcomp --no-verify` with a short retry loop.
+   - Packages and build-verifies all four crates together (see below).
+   - Publishes `rcomp-core`, `rcomp-wgpu`, `rcomp-metal`, then `rcomp`, each
+     with a short retry loop for index propagation lag.
 
    Monitor progress under *Actions → Release* on GitHub.
 
 ### Re-running a half-failed release
 
 The workflow is idempotent.  If it fails mid-way (e.g. rcomp-core published but
-rcomp did not), re-trigger by re-running the failed workflow run in the GitHub
+the others did not), re-trigger by re-running the failed workflow run in the GitHub
 UI.  The publish steps query the crates.io sparse index first and skip any crate
 whose exact version is already present and not yanked — so re-running never
 produces "already uploaded" errors.
 
-## Why `rcomp` cannot be dry-run-validated before publishing
+## Pre-publish validation
 
-`cargo publish --dry-run` for `rcomp` fails even locally if `rcomp-core` is not
-already on crates.io.  When cargo packages `rcomp` it strips the local `path =`
-from the `rcomp-core` dependency and must resolve the crate from the registry
-index — even `--no-verify --offline` cannot satisfy that.  There is no way to
-pre-validate `rcomp` packaging before `rcomp-core` is live.
-
-The consequence: the first time `rcomp` is successfully packaged is the real
-`cargo publish -p rcomp --no-verify` step in the workflow.  `rcomp-core` is
-fully dry-run-validated as a compensating control.
+`cargo package -p rcomp-core -p rcomp-wgpu -p rcomp-metal -p rcomp --locked`
+packages the crates into a temporary local registry, so each crate resolves its
+siblings without them being on crates.io yet, and builds every package from
+its packaged sources.  CI runs this on every push (the `package` job) and the
+release workflow runs it before publishing anything, so a manifest crates.io
+would reject — such as a dependency on an unpublished crate — fails early.
+Run it locally before tagging a release.
 
 ## Manual fallback
 
@@ -95,27 +95,27 @@ does not exist yet, or secrets are not configured).
    export CARGO_REGISTRY_TOKEN=<your-token>
    ```
 
-2. Publish `rcomp-core` first and wait for it to be indexed:
+2. Validate packaging (see above):
 
    ```
-   cargo publish -p rcomp-core --locked
+   cargo package -p rcomp-core -p rcomp-wgpu -p rcomp-metal -p rcomp --locked
    ```
 
-   Cargo ≥ 1.66 blocks until the crate is visible in the index before
-   returning.  If it returns an error about the crate already existing at this
-   version, you can safely continue to step 3.
-
-3. Publish `rcomp`:
+3. Publish in dependency order:
 
    ```
+   cargo publish -p rcomp-core --no-verify --locked
+   cargo publish -p rcomp-wgpu --no-verify --locked
+   cargo publish -p rcomp-metal --no-verify --locked
    cargo publish -p rcomp --no-verify --locked
    ```
 
-   `--no-verify` is required because cargo cannot package `rcomp` for
-   verification before `rcomp-core` is in the index — see the section above.
-   If this fails with an index-lag error, wait 30 seconds and retry.
+   Cargo ≥ 1.66 blocks until each crate is visible in the index before
+   returning.  If one reports the crate already exists at this version,
+   continue with the next.  If one fails with an index-lag error, wait 30
+   seconds and retry.
 
-4. Verify both crates appear on crates.io:
+4. Verify the crates appear on crates.io:
 
    ```
    cargo search rcomp

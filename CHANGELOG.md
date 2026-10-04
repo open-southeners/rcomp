@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--accelerator-device PROVIDER:DEVICE-ID` or `RCOMP_ACCELERATOR_DEVICE`.
   Provider diagnostics include backend, driver, buffer limits, batch policy,
   and exact capabilities where available.
+- The `rcomp-wgpu` and `rcomp-metal` provider crates are now published to
+  crates.io alongside `rcomp-core`, so `cargo install rcomp --features wgpu`
+  (or `metal` on macOS) builds the GPU-capable CLI.
 - Added stable structured acceleration fallback reasons alongside the existing
   human-readable report notice, covering missing providers/devices,
   unsupported operations, experimental capabilities, explicit selectors, and
