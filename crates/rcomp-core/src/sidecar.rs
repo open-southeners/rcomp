@@ -140,12 +140,14 @@ pub fn format_sidecar(artifact_hex: &str, content_hex: Option<&str>, file_name: 
 /// # Returns
 ///
 /// `Ok((verify_sha256, verify_content_sha256))` where each field is `Some` when
-/// the corresponding digest was present and valid.
+/// the corresponding digest was present and valid.  Digests are returned in
+/// lowercase, whatever case the sidecar used (PowerShell `Get-FileHash` and
+/// `certutil` write uppercase).
 ///
 /// # Errors
 ///
 /// - [`SidecarError::MalformedContentDigest`] — the `# content-sha256:` comment
-///   is present but its hex value is not exactly 64 lowercase hex characters.
+///   is present but its hex value is not exactly 64 hex characters.
 /// - [`SidecarError::MalformedArtifactDigest`] — an artifact line for
 ///   `input_name` is present but its hex value is malformed.
 /// - [`SidecarError::NoMatchingEntry`] — no artifact line matches `input_name`.
@@ -164,7 +166,7 @@ pub fn parse_sidecar(
 
         // Comment line: `# content-sha256: <hex>`
         if let Some(rest) = line.strip_prefix("# content-sha256:") {
-            let hex = rest.trim().to_owned();
+            let hex = rest.trim().to_ascii_lowercase();
             if !is_sha256_hex(&hex) {
                 return Err(SidecarError::MalformedContentDigest {
                     line: line.to_owned(),
@@ -205,7 +207,7 @@ pub fn parse_sidecar(
                 file_name: input_name.to_owned(),
             });
         }
-        artifact_hex = Some(hex_part.to_owned());
+        artifact_hex = Some(hex_part.to_ascii_lowercase());
     }
 
     match artifact_hex {
@@ -422,6 +424,17 @@ mod tests {
         let (artifact, content) = parse_sidecar(&text, "archive.tar.gz").unwrap();
         assert_eq!(artifact, Some(hex));
         assert_eq!(content, None);
+    }
+
+    #[test]
+    fn parse_lowercases_uppercase_digests() {
+        // PowerShell `Get-FileHash` and `certutil` write uppercase hex.
+        let ahex = "AB".repeat(32);
+        let chex = "CD".repeat(32);
+        let text = format!("# content-sha256: {chex}\n{ahex}  archive.tar.gz\n");
+        let (artifact, content) = parse_sidecar(&text, "archive.tar.gz").unwrap();
+        assert_eq!(artifact, Some("ab".repeat(32)));
+        assert_eq!(content, Some("cd".repeat(32)));
     }
 
     #[test]

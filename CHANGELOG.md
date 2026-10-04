@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tarballs with a leading `./` entry (as written by `tar -C dir -cf x.tar .`)
   now extract instead of failing, and get a wrap folder like any other
   multi-root archive.
+- Checksum files with uppercase digests (as written by PowerShell
+  `Get-FileHash` or `certutil`) now verify instead of reporting a mismatch.
 - The CLI progress line no longer crashes on long entry names containing
   non-ASCII characters.
 

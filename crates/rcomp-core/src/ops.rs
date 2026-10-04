@@ -257,15 +257,16 @@ pub struct ExtractOptions {
     pub overwrite: bool,
     /// Cancellation handle.  Cloning shares the same underlying flag.
     pub cancel: CancelToken,
-    /// Expected SHA-256 digest of the compressed input artifact (lowercase hex).
+    /// Expected SHA-256 digest of the compressed input artifact (hex, compared
+    /// case-insensitively).
     ///
     /// When `Some`, the input file is streamed through a SHA-256 hasher
     /// **before** any data is written to `dest`.  If the computed digest does
     /// not match, [`Error::ChecksumMismatch`] is returned with `kind =
     /// "artifact"` and the destination directory is left empty of files.
     pub verify_sha256: Option<String>,
-    /// Expected SHA-256 digest of the decompressed content stream (lowercase
-    /// hex).
+    /// Expected SHA-256 digest of the decompressed content stream (hex,
+    /// compared case-insensitively).
     ///
     /// When `Some`, the decompressed stream is teed through a SHA-256 hasher
     /// during extraction and compared at the end.  A mismatch returns
@@ -1020,7 +1021,7 @@ fn run_extract(
     // so an empty dest dir may be created; files are what matter.
     if let Some(ref expected) = opts.verify_sha256 {
         let actual = hash_file(input)?;
-        if actual != *expected {
+        if !actual.eq_ignore_ascii_case(expected) {
             return Err(Error::ChecksumMismatch {
                 kind: "artifact",
                 expected: expected.clone(),
@@ -1227,7 +1228,7 @@ fn do_extract(
             // Verify content digest after stream fully consumed.
             if let (Some(expected), Some(ch)) = (verify_content_sha256, content_hasher) {
                 let actual = finalize_shared(ch);
-                if actual != expected {
+                if !actual.eq_ignore_ascii_case(expected) {
                     return Err(Error::ChecksumMismatch {
                         kind: "content",
                         expected: expected.to_owned(),
@@ -1296,7 +1297,7 @@ fn do_extract(
                     // Verify after stream consumed.
                     if let Some(expected) = verify_content_sha256 {
                         let actual = finalize_shared(Arc::clone(ch));
-                        if actual != expected {
+                        if !actual.eq_ignore_ascii_case(expected) {
                             return Err(Error::ChecksumMismatch {
                                 kind: "content",
                                 expected: expected.to_owned(),
@@ -1333,7 +1334,7 @@ fn do_extract(
                     // Verify after stream consumed.
                     if let Some(expected) = verify_content_sha256 {
                         let actual = finalize_shared(Arc::clone(ch));
-                        if actual != expected {
+                        if !actual.eq_ignore_ascii_case(expected) {
                             return Err(Error::ChecksumMismatch {
                                 kind: "content",
                                 expected: expected.to_owned(),
