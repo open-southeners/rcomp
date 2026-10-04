@@ -9,7 +9,7 @@
    * and removing items is delegated to the parent workspace.
    */
   import { onMount, onDestroy } from "svelte";
-  import { pickSavePath, confirmDialog } from "../dialogs";
+  import { pickSavePath, confirmDialog, warningDialog } from "../dialogs";
   import { compressMany, writeSidecar, onMenuCompress } from "../ipc";
   import {
     CODECS,
@@ -163,8 +163,13 @@
       if (checksum && report.sha256) {
         try {
           await writeSidecar(outputPath, report.sha256, report.content_sha256);
-        } catch {
-          // Sidecar write failure is non-fatal; continue to show summary.
+        } catch (err: unknown) {
+          // The archive itself is fine, so still show the summary, but tell
+          // the user the checksum file they asked for is missing.
+          await warningDialog(
+            `The archive was created, but its checksum file could not be written: ${(err as IpcError).message ?? err}`,
+            "Checksum file not written",
+          );
         }
       }
 

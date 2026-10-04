@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently stopping after the first stream.
 - Extracting with overwrite enabled now replaces existing symlinks and hard
   links in the destination instead of failing with "already exists".
+- Desktop app: ticking "checksum" when compressing now writes the `.sha256`
+  file next to the archive (it was silently skipped), and a failure to write
+  it is now reported instead of ignored.
 
 ### Security
 

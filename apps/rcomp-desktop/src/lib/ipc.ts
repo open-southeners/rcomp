@@ -132,7 +132,11 @@ export async function writeSidecar(
   artifact_sha256: string,
   content_sha256: string | null,
 ): Promise<void> {
-  return invoke<void>("write_sidecar", { output, artifact_sha256, content_sha256 });
+  return invoke<void>("write_sidecar", {
+    output,
+    artifactSha256: artifact_sha256,
+    contentSha256: content_sha256,
+  });
 }
 
 /**
