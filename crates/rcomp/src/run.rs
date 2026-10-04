@@ -688,7 +688,9 @@ fn map_core_error(e: CoreError, operation: &str) -> anyhow::Error {
         CoreError::AlreadyExists { ref path } => {
             anyhow::anyhow!("{e}\nhint: use --force to overwrite `{}`", path.display())
         }
-        CoreError::AccelerationUnavailable { .. } => anyhow::anyhow!("{operation} failed: {e}"),
+        CoreError::AccelerationUnavailable { .. } => anyhow::anyhow!(
+            "{operation} failed: {e}\nhint: use --accelerator auto or --accelerator cpu to run on the CPU"
+        ),
         other => anyhow::anyhow!("{other}").context(format!("{operation} failed")),
     }
 }

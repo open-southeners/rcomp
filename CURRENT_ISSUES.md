@@ -252,18 +252,6 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   pending batch when it is already 4-byte aligned. Consider a mapped upload
   ring instead of `queue.write_buffer`. Record the budget in the README.
 
-- **Where:** `crates/rcomp-core/src/acceleration.rs:597` (and the explicit
-  device message at :539)
-  **What:** `--accelerator required` failures end with "...; using the CPU is
-  the only supported path on this system". The operation actually fails and
-  does **not** fall back, so the wording suggests a fallback that didn't
-  happen. With an explicit `--accelerator-device`, `--best` fails with the
-  generic "unavailable or incompatible" message and does not say that only
-  `Fast` is supported.
-  **Fix:** Use different wording for required-mode errors (for example "GPU
-  encoding requires --fast on this device") and keep "using CPU" for `auto`
-  notices only.
-
 - **Where:** `.github/workflows/ci.yml` (`clippy` job runs on Linux only), CLI
   cancel test (`crates/rcomp/tests/cancel.rs` is `#![cfg(unix)]` and uses
   codec-only `.bz2`)
@@ -280,30 +268,6 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `cfg` as their users. Consider a Windows CLI cancel test that sends a real
   `CTRL_C_EVENT` from a helper process on a private console.
 
-- **Where:** `crates/rcomp-core/src/acceleration.rs` (explicit-target branch of
-  selection, `requested accelerator … is unavailable or incompatible`)
-  **What:** Found during the Linux/Intel NUC qualification. With
-  `--accelerator-device` set, the explicit-target check runs before the
-  level/direction checks. As a result `--accelerator required --best` on the
-  real, present Intel device prints exactly the same error as an invented
-  device ID. Neither message says the device exists but only supports `Fast`.
-  **Fix:** When the target device matches but its capability does not, report
-  the specific reason (unsupported level/direction), e.g. "`wgpu:vulkan:…`
-  supports lz4 encoding only at Fast level". Keep "not found" for IDs that
-  match no device. Add a test for each.
-
-- **Where:** `crates/rcomp-core/src/acceleration.rs` (`unavailable_message`)
-  **What:** Its message ends "…; using the CPU is the only supported path on
-  this system". That suffix is right for an `auto` fallback, but the same text
-  is the `required` hard error. Seen on `rcomp x.lz4 out --accelerator required`
-  (exit 1, no CPU run), where it reads as though the CPU was used.
-  **Fix:** Pass the preference into the message (or let the CLI add the
-  suffix). For `required`, end with a hint such as "use `--accelerator auto` or
-  `cpu` to run on the CPU".
-
-
-## Resolved
-
 - **Where:** `crates/rcomp-wgpu/src/provider.rs` (one dispatch per batch)
   **Outcome:** Resolved. Each 64 MiB batch was a single compute dispatch. On
   the Ryzen 7 7800X3D's Radeon iGPU, an incompressible batch took 1.36 s of
@@ -318,6 +282,21 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   Remaining cost: about 0.5 s of ramp-up per process on wide GPUs, and the
   iGPU tar is 15% slower (10.9 s → 12.5 s). If the ramp-up matters, persist
   the learned size per device or start larger once a device is known.
+
+## Resolved
+
+- **Where:** `crates/rcomp-core/src/acceleration.rs` (`required` selection
+  errors) + `crates/rcomp/src/run.rs` (error mapping)
+  **Outcome:** Resolved — both wording issues found during the Linux/Intel
+  NUC qualification. A `required` failure now names the first unmet
+  dimension: an explicit device ID that matches nothing reports "was not
+  found", while a present device reports e.g. "supports lz4 encoding only at
+  Fast level" or "does not support lz4 decoding". The `required` error no
+  longer claims a CPU path; the `auto` notice ends "; using CPU", and the CLI
+  appends "hint: use --accelerator auto or --accelerator cpu to run on the
+  CPU". Pinned by `required_explains_why_an_existing_target_is_incompatible`,
+  `required_without_target_names_supported_levels_and_not_the_cpu`, and
+  `required_flag_fails_before_creating_output`.
 
 - **Where:** `crates/rcomp-core/src/ops.rs` — `extract()`'s `output_bytes`.
   **Outcome:** Resolved — `output_bytes` was computed by recursively summing

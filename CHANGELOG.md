@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--accelerator required` errors now say why the operation could not run: an
+  `--accelerator-device` ID that matches nothing is reported as not found, and
+  a present device names what it lacks (for example, LZ4 encoding only at the
+  `Fast` level). The error no longer implies the CPU was used, and the CLI
+  suggests `--accelerator auto` or `cpu` instead.
+
 ## [0.4.0] - 2026-10-14
 
 ### Added
