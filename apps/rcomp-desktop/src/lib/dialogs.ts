@@ -5,7 +5,7 @@
  * of plugin-specific imports.
  */
 
-import { open, save, confirm } from "@tauri-apps/plugin-dialog";
+import { open, save, confirm, message } from "@tauri-apps/plugin-dialog";
 
 /** Open a single file picker.  Returns `null` when the user cancels. */
 export async function pickFile(): Promise<string | null> {
@@ -45,4 +45,9 @@ export async function pickSavePath(defaultName?: string): Promise<string | null>
  */
 export async function confirmDialog(message: string, title?: string): Promise<boolean> {
   return confirm(message, title ? { title } : undefined);
+}
+
+/** Show a native warning message with a single OK button. */
+export async function warningDialog(text: string, title?: string): Promise<void> {
+  await message(text, { title, kind: "warning" });
 }
