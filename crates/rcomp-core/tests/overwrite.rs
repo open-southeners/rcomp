@@ -442,3 +442,138 @@ fn extract_output_bytes_excludes_preexisting_unrelated_files() {
          not the pre-existing unrelated file already in dest"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Failed or cancelled operations never damage the destination
+// ---------------------------------------------------------------------------
+
+/// Deterministic, poorly-compressible bytes so streams span many blocks.
+fn noise(len: usize) -> Vec<u8> {
+    let mut x: u32 = 0x2545_f491;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as u8
+        })
+        .collect()
+}
+
+/// Names of leftover `.rcomp-*.tmp` staging files in `dir`.
+fn staging_leftovers(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(".rcomp-"))
+        .collect()
+}
+
+/// A cancelled `compress` with `overwrite` must leave the existing output
+/// byte-identical — previously it was truncated first and then deleted.
+#[test]
+fn cancelled_overwrite_compress_preserves_existing_output() {
+    let work = TempDir::new().unwrap();
+    let src = work.path().join("data.bin");
+    std::fs::write(&src, noise(4 << 20)).unwrap();
+    let out = work.path().join("data.bin.gz");
+    let sentinel = b"previous archive";
+    std::fs::write(&out, sentinel).unwrap();
+
+    let opts = CompressOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    let token = opts.cancel.clone();
+    let err =
+        compress(&src, &out, &opts, |_| token.cancel()).expect_err("cancelled compress must fail");
+
+    assert!(
+        matches!(err, Error::Cancelled),
+        "expected Cancelled, got {err:?}"
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), sentinel);
+    assert!(staging_leftovers(work.path()).is_empty());
+}
+
+/// Extracting a truncated single-file stream with `overwrite` must leave the
+/// existing file intact and no partial output or staging file behind.
+#[test]
+fn failed_single_file_extract_preserves_existing_file() {
+    let work = TempDir::new().unwrap();
+    let src = work.path().join("data.bin");
+    std::fs::write(&src, noise(1 << 20)).unwrap();
+    let archive = work.path().join("data.bin.gz");
+    compress(&src, &archive, &Default::default(), nop).unwrap();
+
+    // Truncate the archive halfway so decoding fails mid-stream.
+    let bytes = std::fs::read(&archive).unwrap();
+    std::fs::write(&archive, &bytes[..bytes.len() / 2]).unwrap();
+
+    let dest = work.path().join("dest");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(dest.join("data.bin"), b"keep me").unwrap();
+
+    let opts = ExtractOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    extract(&archive, &dest, &opts, nop).expect_err("truncated stream must fail");
+
+    assert_eq!(std::fs::read(dest.join("data.bin")).unwrap(), b"keep me");
+    assert!(staging_leftovers(&dest).is_empty());
+}
+
+/// A failed single-file extract without an existing file leaves nothing.
+#[test]
+fn failed_single_file_extract_leaves_no_partial_file() {
+    let work = TempDir::new().unwrap();
+    let src = work.path().join("data.bin");
+    std::fs::write(&src, noise(1 << 20)).unwrap();
+    let archive = work.path().join("data.bin.gz");
+    compress(&src, &archive, &Default::default(), nop).unwrap();
+    let bytes = std::fs::read(&archive).unwrap();
+    std::fs::write(&archive, &bytes[..bytes.len() / 2]).unwrap();
+
+    let dest = work.path().join("dest");
+    std::fs::create_dir(&dest).unwrap();
+    extract(&archive, &dest, &Default::default(), nop).expect_err("truncated stream must fail");
+
+    assert_eq!(
+        std::fs::read_dir(&dest).unwrap().count(),
+        0,
+        "dest must stay empty"
+    );
+}
+
+/// Compressed output gets the same mode a plain file would (not the `0600`
+/// of a temp file), and replacing a file keeps that file's mode.
+#[cfg(unix)]
+#[test]
+fn compressed_output_mode_matches_a_regular_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+    let work = TempDir::new().unwrap();
+    let src = work.path().join("data.txt");
+    std::fs::write(&src, b"hello").unwrap();
+    // A file created normally shows the umask-adjusted default mode.
+    let probe = work.path().join("probe");
+    std::fs::write(&probe, b"").unwrap();
+
+    let out = work.path().join("data.txt.zst");
+    compress(&src, &out, &Default::default(), nop).unwrap();
+    assert_eq!(mode(&out), mode(&probe));
+
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let opts = CompressOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    compress(&src, &out, &opts, nop).unwrap();
+    assert_eq!(
+        mode(&out),
+        0o640,
+        "overwrite keeps the replaced file's mode"
+    );
+}

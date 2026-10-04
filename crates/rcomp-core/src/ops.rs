@@ -501,14 +501,13 @@ fn run_compress(
         progress,
     };
 
-    // Accelerated output is staged beside the destination. Keeping both paths
-    // on the same filesystem lets publication use an atomic rename and avoids
-    // exposing partial frames or damaging an existing output on failure.
+    // Output is staged beside the destination and only published (atomic
+    // rename) once complete. Keeping both paths on the same filesystem makes
+    // the rename atomic, so a failure or cancellation never exposes a partial
+    // archive or destroys an existing output that `overwrite` would replace.
     let accelerated = acceleration.block_encoder.is_some();
-    let staged_output = accelerated
-        .then(|| staged_output_path(output))
-        .transpose()?;
-    let write_output = staged_output.as_deref().unwrap_or(output);
+    let staged_output = staged_output_path(output)?;
+    let write_output: &Path = &staged_output;
     let mut backend = acceleration.backend;
     let mut acceleration_notice = acceleration.notice;
     let mut acceleration_fallback = acceleration.fallback_reason;
@@ -534,8 +533,8 @@ fn run_compress(
         result
     };
 
-    // `Auto` may safely retry a failed accelerator because regular-file GPU
-    // output is isolated in a temporary sibling and has not been published.
+    // `Auto` may safely retry a failed accelerator because the output is
+    // isolated in a temporary sibling and has not been published.
     // `Required`, cancellation, and unrelated I/O/codec failures never retry.
     if opts.acceleration == AccelerationPreference::Auto
         && accelerated
@@ -568,20 +567,15 @@ fn run_compress(
         }
     }
 
-    // --- Best-effort cleanup on failure ---
-    if result.is_err() {
-        let _ = fs::remove_file(write_output);
-    }
-
+    // On failure or late cancellation `staged_output` is dropped unpublished,
+    // which deletes it; the destination is never touched.
     let (entries, input_bytes, sha256, content_sha256) = result?;
 
     if opts.cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    if let Some(staged_output) = staged_output {
-        sync_staged_output(&staged_output)?;
-        publish_staged_output(staged_output, output, opts.overwrite)?;
-    }
+    sync_staged_output(&staged_output)?;
+    publish_staged_output(staged_output, output, opts.overwrite)?;
 
     let output_bytes = fs::metadata(output).map(|m| m.len()).unwrap_or(0);
 
@@ -610,16 +604,26 @@ fn acceleration_failure_provider(error: &Error) -> Option<String> {
     }
 }
 
+/// Create the temporary sibling that `output` is written to before publishing.
+///
+/// Temp files are normally created `0600`; the published archive should get
+/// the same mode a plain `File::create` would (`0666` minus the umask).  When
+/// it replaces an existing file, [`publish_staged_output`] keeps that file's
+/// mode instead.
 fn staged_output_path(output: &Path) -> Result<TempPath> {
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let file = TempFileBuilder::new()
-        .prefix(".rcomp-")
-        .suffix(".tmp")
-        .tempfile_in(parent)?;
-    Ok(file.into_temp_path())
+    let mut builder = TempFileBuilder::new();
+    builder.prefix(".rcomp-").suffix(".tmp");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // `open(2)` applies the umask to this mode.
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    Ok(builder.tempfile_in(parent)?.into_temp_path())
 }
 
 fn sync_staged_output(path: &Path) -> Result<()> {
@@ -632,6 +636,13 @@ fn sync_staged_output(path: &Path) -> Result<()> {
 }
 
 fn publish_staged_output(staged: TempPath, output: &Path, overwrite: bool) -> Result<()> {
+    // Replacing a file in place used to keep its mode; keep doing that.
+    if overwrite
+        && let Ok(existing) = fs::metadata(output)
+        && existing.is_file()
+    {
+        fs::set_permissions(&staged, existing.permissions())?;
+    }
     let result = if overwrite {
         staged.persist(output)
     } else {
@@ -1312,14 +1323,17 @@ fn do_extract(
                     let out_name = output_name_for_codec_file(input, codec)?;
                     let out_path = dest.join(&out_name);
 
-                    if out_path.exists() && !overwrite {
+                    if out_path.symlink_metadata().is_ok() && !overwrite {
                         return Err(Error::AlreadyExists { path: out_path });
                     }
 
                     ctx.set_entry(out_name.to_string_lossy().as_ref());
                     ctx.check_cancel()?;
 
-                    let mut out_file = fs::File::create(&out_path)?;
+                    // Decode into a staged sibling; it is only published once
+                    // the stream (and its digest) checks out.
+                    let staged = staged_output_path(&out_path)?;
+                    let mut out_file = fs::File::create(&staged)?;
                     // Write the already-sniffed (already hashed) bytes first,
                     // then copy the rest through the hashing decoder.
                     out_file.write_all(&sniff_bytes)?;
@@ -1343,6 +1357,9 @@ fn do_extract(
                         }
                     }
 
+                    drop(out_file);
+                    ctx.check_cancel()?;
+                    publish_staged_output(staged, &out_path, overwrite)?;
                     Ok((1, compressed, output_bytes))
                 }
             } else {
@@ -1363,14 +1380,17 @@ fn do_extract(
                     let out_name = output_name_for_codec_file(input, codec)?;
                     let out_path = dest.join(&out_name);
 
-                    if out_path.exists() && !overwrite {
+                    if out_path.symlink_metadata().is_ok() && !overwrite {
                         return Err(Error::AlreadyExists { path: out_path });
                     }
 
                     ctx.set_entry(out_name.to_string_lossy().as_ref());
                     ctx.check_cancel()?;
 
-                    let mut out_file = fs::File::create(&out_path)?;
+                    // Decode into a staged sibling; it is only published once
+                    // the whole stream decoded cleanly.
+                    let staged = staged_output_path(&out_path)?;
+                    let mut out_file = fs::File::create(&staged)?;
                     out_file.write_all(&sniff_bytes)?;
                     let rest_written =
                         copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
@@ -1379,6 +1399,10 @@ fn do_extract(
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
                     (ctx.on_progress)(&ctx.progress);
+
+                    drop(out_file);
+                    ctx.check_cancel()?;
+                    publish_staged_output(staged, &out_path, overwrite)?;
                     Ok((1, compressed, output_bytes))
                 }
             }
