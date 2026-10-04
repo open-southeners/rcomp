@@ -476,17 +476,31 @@ fn sidecar_path_for(path: &Path) -> std::path::PathBuf {
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
+//
+// Synchronous `#[tauri::command] fn`s run on the main thread, so anything
+// that touches the filesystem — listing a `.tar.xz` decodes the whole stream —
+// is an `async` command that does its work in `spawn_blocking`.  Only
+// `cancel_job`, which just flips a flag, stays synchronous.
+
+/// Run blocking filesystem work off the main thread.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
+) -> Result<T, IpcError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| Err(IpcError::new("io", format!("task panicked: {e}"))))
+}
 
 /// Return filesystem metadata for `path`.
 #[tauri::command]
-pub fn inspect(path: String) -> Result<InspectResult, IpcError> {
-    do_inspect(Path::new(&path))
+pub async fn inspect(path: String) -> Result<InspectResult, IpcError> {
+    blocking(move || do_inspect(Path::new(&path))).await
 }
 
 /// List the entries of the archive at `path`.
 #[tauri::command]
-pub fn list_entries(path: String) -> Result<Vec<Entry>, IpcError> {
-    do_list_entries(Path::new(&path))
+pub async fn list_entries(path: String) -> Result<Vec<Entry>, IpcError> {
+    blocking(move || do_list_entries(Path::new(&path))).await
 }
 
 /// Cancel the in-flight job identified by `job_id`.
@@ -500,22 +514,25 @@ pub fn cancel_job(job_id: String, registry: tauri::State<'_, JobRegistry>) -> Re
 
 /// Read a sidecar file for the archive at `path`.
 #[tauri::command]
-pub fn read_sidecar(path: String) -> Result<SidecarData, IpcError> {
-    do_read_sidecar(Path::new(&path))
+pub async fn read_sidecar(path: String) -> Result<SidecarData, IpcError> {
+    blocking(move || do_read_sidecar(Path::new(&path))).await
 }
 
 /// Write a sidecar file for the archive at `output`.
 #[tauri::command]
-pub fn write_sidecar(
+pub async fn write_sidecar(
     output: String,
     artifact_sha256: String,
     content_sha256: Option<String>,
 ) -> Result<(), IpcError> {
-    do_write_sidecar(
-        Path::new(&output),
-        &artifact_sha256,
-        content_sha256.as_deref(),
-    )
+    blocking(move || {
+        do_write_sidecar(
+            Path::new(&output),
+            &artifact_sha256,
+            content_sha256.as_deref(),
+        )
+    })
+    .await
 }
 
 /// Return wrap-folder information for the archive at `path`.
@@ -524,8 +541,8 @@ pub fn write_sidecar(
 /// inside a wrap directory (when `roots >= 2`) and what to name it
 /// (`wrap_dir`).
 #[tauri::command]
-pub fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
-    do_wrap_info(Path::new(&path))
+pub async fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
+    blocking(move || do_wrap_info(Path::new(&path))).await
 }
 
 /// Compress `input` to `output`, streaming [`ProgressEvent`]s via `channel`.
