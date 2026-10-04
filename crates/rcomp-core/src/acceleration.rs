@@ -435,6 +435,7 @@ pub(crate) fn select(
     let mut matching_format = false;
     let mut matching_direction = false;
     let mut matching_level = false;
+    let mut supported_levels: Vec<Level> = Vec::new();
     let mut discovery_failure: Option<(String, String)> = None;
     for provider in registry.providers() {
         let descriptor = provider.descriptor();
@@ -478,6 +479,11 @@ pub(crate) fn select(
                     continue;
                 }
                 matching_direction = true;
+                for supported in &capability.levels {
+                    if !supported_levels.contains(supported) {
+                        supported_levels.push(*supported);
+                    }
+                }
                 if level.is_some_and(|level| !capability.levels.contains(&level)) {
                     continue;
                 }
@@ -530,16 +536,27 @@ pub(crate) fn select(
         }
     }
 
+    let mismatch = if registry.providers().is_empty() {
+        Mismatch::NoProvider
+    } else if !matching_provider || !matching_device {
+        Mismatch::NoDevice
+    } else if !saw_capability {
+        Mismatch::NoCapabilities
+    } else if !matching_codec {
+        Mismatch::Codec
+    } else if !matching_format {
+        Mismatch::Format
+    } else if !matching_direction {
+        Mismatch::Direction
+    } else if !matching_level {
+        Mismatch::Level(supported_levels)
+    } else {
+        Mismatch::Other
+    };
+
     if preference == AccelerationPreference::Required {
         return Err(Error::AccelerationUnavailable {
-            reason: target.map_or_else(
-                || unavailable_message(direction, format, level),
-                |target| {
-                    format!(
-                        "requested accelerator `{target}` is unavailable or incompatible with {format} {direction}"
-                    )
-                },
-            ),
+            reason: required_message(target, &mismatch, direction, format, level),
         });
     }
 
@@ -562,24 +579,26 @@ pub(crate) fn select(
             AccelerationFallbackReason::ExplicitTargetUnavailable {
                 target: target.to_string(),
             }
-        } else if registry.providers().is_empty() {
-            AccelerationFallbackReason::NoProviderInstalled
-        } else if !matching_provider || !matching_device {
-            AccelerationFallbackReason::NoCompatibleDevice
-        } else if !saw_capability {
-            AccelerationFallbackReason::UnsupportedOperation
-        } else if !matching_codec {
-            AccelerationFallbackReason::UnsupportedCodec
-        } else if !matching_format {
-            AccelerationFallbackReason::UnsupportedFormat
-        } else if !matching_direction {
-            AccelerationFallbackReason::UnsupportedDirection
-        } else if !matching_level {
-            AccelerationFallbackReason::UnsupportedLevel
         } else {
-            AccelerationFallbackReason::UnsupportedOperation
+            match mismatch {
+                Mismatch::NoProvider => AccelerationFallbackReason::NoProviderInstalled,
+                Mismatch::NoDevice => AccelerationFallbackReason::NoCompatibleDevice,
+                Mismatch::Codec => AccelerationFallbackReason::UnsupportedCodec,
+                Mismatch::Format => AccelerationFallbackReason::UnsupportedFormat,
+                Mismatch::Direction => AccelerationFallbackReason::UnsupportedDirection,
+                Mismatch::Level(_) => AccelerationFallbackReason::UnsupportedLevel,
+                Mismatch::NoCapabilities | Mismatch::Other => {
+                    AccelerationFallbackReason::UnsupportedOperation
+                }
+            }
         };
-        (unavailable_message(direction, format, level), reason)
+        (
+            format!(
+                "{}; using CPU",
+                unavailable_message(direction, format, level)
+            ),
+            reason,
+        )
     };
     Ok(Selection {
         backend: ProcessingBackend::Cpu,
@@ -589,13 +608,62 @@ pub(crate) fn select(
     })
 }
 
+/// The first selection dimension that no candidate capability satisfied.
+enum Mismatch {
+    NoProvider,
+    NoDevice,
+    NoCapabilities,
+    Codec,
+    Format,
+    Direction,
+    /// Levels offered by capabilities that matched every other dimension.
+    Level(Vec<Level>),
+    Other,
+}
+
 fn unavailable_message(direction: Direction, format: Format, level: Option<Level>) -> String {
     let level = level
         .map(|value| format!(" at {value:?} level"))
         .unwrap_or_default();
-    format!(
-        "no compatible hardware accelerator is available for {format} {direction}{level}; using the CPU is the only supported path on this system"
-    )
+    format!("no compatible hardware accelerator is available for {format} {direction}{level}")
+}
+
+/// Explain why a `Required` selection failed. The operation does not run, so
+/// unlike the `Auto` notice this never mentions a CPU fallback.
+fn required_message(
+    target: Option<&AcceleratorTarget>,
+    mismatch: &Mismatch,
+    direction: Direction,
+    format: Format,
+    level: Option<Level>,
+) -> String {
+    let only_at = |levels: &[Level]| {
+        let levels = levels
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        format!("supports {format} {direction} only at {levels} level")
+    };
+    let Some(target) = target else {
+        let message = unavailable_message(direction, format, level);
+        return match mismatch {
+            Mismatch::Level(levels) => format!("{message}; hardware {}", only_at(levels)),
+            _ => message,
+        };
+    };
+    match mismatch {
+        Mismatch::NoProvider | Mismatch::NoDevice => {
+            format!("requested accelerator `{target}` was not found")
+        }
+        Mismatch::NoCapabilities => {
+            format!("requested accelerator `{target}` exposes no accelerated operations")
+        }
+        Mismatch::Level(levels) => format!("requested accelerator `{target}` {}", only_at(levels)),
+        Mismatch::Codec | Mismatch::Format | Mismatch::Direction | Mismatch::Other => {
+            format!("requested accelerator `{target}` does not support {format} {direction}")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -894,7 +962,71 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(error.to_string().contains("fake:missing-device"));
+        assert!(
+            error
+                .to_string()
+                .contains("requested accelerator `fake:missing-device` was not found")
+        );
+    }
+
+    #[test]
+    fn required_explains_why_an_existing_target_is_incompatible() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider { name: "fake" }));
+        let target = AcceleratorTarget {
+            provider_id: "fake".to_owned(),
+            device_id: "device-1".to_owned(),
+        };
+        let cases = [
+            (
+                Direction::Encode,
+                Some(Level::Best),
+                "requested accelerator `fake:device-1` supports lz4 encoding only at Fast level",
+            ),
+            (
+                Direction::Decode,
+                None,
+                "requested accelerator `fake:device-1` does not support lz4 decoding",
+            ),
+        ];
+
+        for (direction, level, expected) in cases {
+            let error = select(
+                &registry,
+                AccelerationPreference::Required,
+                Some(&target),
+                direction,
+                Format::codec(Codec::Lz4),
+                level,
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("not found"), "{error}");
+        }
+    }
+
+    #[test]
+    fn required_without_target_names_supported_levels_and_not_the_cpu() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider { name: "fake" }));
+        let error = select(
+            &registry,
+            AccelerationPreference::Required,
+            None,
+            Direction::Encode,
+            Format::codec(Codec::Lz4),
+            Some(Level::Best),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.contains("hardware supports lz4 encoding only at Fast level"),
+            "{error}"
+        );
+        assert!(!error.contains("CPU"), "{error}");
     }
 
     #[test]

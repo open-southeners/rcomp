@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--accelerator required` errors now say why the operation could not run: an
+  `--accelerator-device` ID that matches nothing is reported as not found, and
+  a present device names what it lacks (for example, LZ4 encoding only at the
+  `Fast` level). The error no longer implies the CPU was used, and the CLI
+  suggests `--accelerator auto` or `cpu` instead.
 - Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from
   `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of
   silently stopping after the first stream.

@@ -49,7 +49,11 @@ fn required_flag_fails_before_creating_output() {
         .code(1)
         .stderr(predicate::str::contains(
             "hardware acceleration unavailable",
-        ));
+        ))
+        .stderr(predicate::str::contains(
+            "hint: use --accelerator auto or --accelerator cpu",
+        ))
+        .stderr(predicate::str::contains("using the CPU").not());
 
     assert!(!std::path::Path::new(&output).exists());
 }
