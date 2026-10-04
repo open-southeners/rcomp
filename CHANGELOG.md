@@ -84,6 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file intact and leaves nothing behind on error.
 - The CLI progress line no longer crashes on long entry names containing
   non-ASCII characters.
+- Desktop app: opening or inspecting a large archive no longer freezes the
+  window.
 
 ### Security
 
