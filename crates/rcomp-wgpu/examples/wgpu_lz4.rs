@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let info = match &requested_device {
         Some(device_id) => infos
             .iter()
-            .find(|info| &info.device_id == device_id)
+            .find(|info| info.device_id == device_id.strip_prefix("wgpu:").unwrap_or(device_id))
             .cloned()
             .ok_or_else(|| format!("RCOMP_WGPU_DEVICE={device_id} is not a compatible adapter"))?,
         None => infos

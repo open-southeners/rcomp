@@ -70,9 +70,13 @@ fn select_device(provider: &WgpuProvider) -> AcceleratorDevice {
         .devices()
         .expect("portable adapter discovery should succeed");
     let selected = match env::var(DEVICE_VARIABLE) {
+        // Accept the ID exactly as `rcomp hardware` prints it, with or without
+        // the `wgpu:` provider prefix.
         Ok(device_id) => devices
             .iter()
-            .find(|device| device.device_id == device_id)
+            .find(|device| {
+                device.device_id == device_id.strip_prefix("wgpu:").unwrap_or(&device_id)
+            })
             .unwrap_or_else(|| {
                 let available = devices
                     .iter()
