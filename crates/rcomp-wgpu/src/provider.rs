@@ -345,22 +345,28 @@ impl BlockEncoderSession for WgpuBlockEncoder {
         if cancel.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
-        let blocks = self.compress_blocks_inner(input).map_err(core_failure)?;
+        let blocks = self
+            .compress_blocks_inner(input, cancel)
+            .map_err(core_failure)?;
         // Native GPU work cannot be revoked safely after submission. We wait
-        // for completion and discard the mapped result if cancellation arrived
-        // while the command was active.
-        if cancel.is_cancelled() {
-            Err(CoreError::Cancelled)
-        } else {
-            Ok(blocks)
+        // for the active submission and discard the result if cancellation
+        // arrived meanwhile; later submissions of the batch are never sent.
+        match blocks {
+            Some(blocks) if !cancel.is_cancelled() => Ok(blocks),
+            _ => Err(CoreError::Cancelled),
         }
     }
 }
 
 impl WgpuBlockEncoder {
-    fn compress_blocks_inner(&mut self, input: &[u8]) -> Result<Vec<CompressedBlock>> {
+    /// Returns `None` when cancellation stopped the batch between submissions.
+    fn compress_blocks_inner(
+        &mut self,
+        input: &[u8],
+        cancel: &rcomp_core::CancelToken,
+    ) -> Result<Option<Vec<CompressedBlock>>> {
         if input.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Some(Vec::new()));
         }
         if input.len() > self.context.preferred_batch_size {
             return Err(WgpuError::InputTooLarge);
@@ -419,6 +425,9 @@ impl WgpuBlockEncoder {
             u32::try_from(output_slot_stride).map_err(|_| WgpuError::InputTooLarge)?;
         let mut next_block = 0;
         while next_block < block_count {
+            if cancel.is_cancelled() {
+                return Ok(None);
+            }
             let blocks = self
                 .context
                 .submission_budget
@@ -510,7 +519,7 @@ impl WgpuBlockEncoder {
         buffers.sizes_readback.unmap();
         let (plans, packed_size) = plan_result?;
         if packed_size == 0 {
-            return collect_packed_blocks(input, &[], &plans);
+            return collect_packed_blocks(input, &[], &plans).map(Some);
         }
 
         let mut encoder =
@@ -562,7 +571,7 @@ impl WgpuBlockEncoder {
             collect_packed_blocks(input, &output, &plans)
         })();
         buffers.output_readback.unmap();
-        result
+        result.map(Some)
     }
 
     fn ensure_buffers(
