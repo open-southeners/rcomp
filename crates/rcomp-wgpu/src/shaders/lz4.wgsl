@@ -8,8 +8,12 @@ struct Parameters {
     block_size: u32,
     output_slot_size: u32,
     output_slot_stride: u32,
-    block_count: u32,
-    _padding_0: u32,
+    // Exclusive end of the blocks this submission compresses.
+    block_end: u32,
+    // First block of this submission. A batch is split into several
+    // submissions so no single dispatch runs long enough to trip a driver
+    // watchdog (Windows TDR).
+    block_offset: u32,
     _padding_1: u32,
     _padding_2: u32,
 };
@@ -82,8 +86,8 @@ fn emit_length(
 
 @compute @workgroup_size(64)
 fn rcomp_lz4_compress_blocks(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let block_index = invocation.x;
-    if (block_index >= parameters.block_count) {
+    let block_index = parameters.block_offset + invocation.x;
+    if (block_index >= parameters.block_end) {
         return;
     }
 
