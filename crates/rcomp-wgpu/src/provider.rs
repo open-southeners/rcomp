@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, mpsc},
 };
 
@@ -87,6 +87,7 @@ impl WgpuProvider {
                     .then_some((adapter, native, limits))
             })
             .collect::<Vec<_>>();
+        retain_first_per_pci_location(&mut records, |(_, native, _)| native);
         records.sort_by(|(_, left, _), (_, right, _)| {
             adapter_rank(left.device_type)
                 .cmp(&adapter_rank(right.device_type))
@@ -611,6 +612,30 @@ fn adapter_supports_kernel(limits: &wgpu::Limits) -> bool {
             >= lz4_compress_bound(LZ4_BLOCK_SIZE).unwrap_or(usize::MAX)
 }
 
+/// Drop adapters that repeat an earlier adapter's PCI location.
+///
+/// DXGI can expose one physical GPU as several adapters with distinct LUIDs
+/// (observed with an NVIDIA RTX 3090 on Windows 11 over Remote Desktop). Device
+/// IDs are derived from the PCI location, so the copies would share an ID and
+/// only the first could ever be selected. The first enumerated adapter is
+/// kept. Adapters without a PCI location get ordinal IDs and are never merged.
+fn retain_first_per_pci_location<T>(
+    records: &mut Vec<T>,
+    native: impl Fn(&T) -> &wgpu::AdapterInfo,
+) {
+    let mut seen = HashSet::new();
+    records.retain(|record| {
+        let info = native(record);
+        info.device_pci_bus_id.is_empty()
+            || seen.insert((
+                info.backend,
+                info.vendor,
+                info.device,
+                info.device_pci_bus_id.clone(),
+            ))
+    });
+}
+
 fn adapter_rank(device_type: wgpu::DeviceType) -> u8 {
     match device_type {
         wgpu::DeviceType::DiscreteGpu => 0,
@@ -974,6 +999,56 @@ mod tests {
             driver: String::new(),
             driver_info: String::new(),
         }
+    }
+
+    fn dx12_adapter(name: &str, device: u32, pci_bus_id: &str) -> wgpu::AdapterInfo {
+        let mut info = wgpu::AdapterInfo::new(wgpu::DeviceType::DiscreteGpu, wgpu::Backend::Dx12);
+        info.name = name.to_owned();
+        info.vendor = 0x10de;
+        info.device = device;
+        info.device_pci_bus_id = pci_bus_id.to_owned();
+        info
+    }
+
+    #[test]
+    fn one_physical_adapter_enumerated_twice_gets_one_device_id() {
+        // DXGI on Windows 11 listed an RTX 3090 twice (distinct LUIDs, same
+        // PCI location); both copies mapped to the same device ID.
+        let mut adapters = vec![
+            dx12_adapter("first", 0x2204, "0000:01:00.0"),
+            dx12_adapter("integrated", 0x164e, "0000:73:00.0"),
+            dx12_adapter("second", 0x2204, "0000:01:00.0"),
+        ];
+        retain_first_per_pci_location(&mut adapters, |info| info);
+        let names = adapters
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["first", "integrated"]);
+
+        let ids = adapters
+            .iter()
+            .enumerate()
+            .map(|(ordinal, info)| device_info(info, ordinal).device_id)
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), adapters.len());
+    }
+
+    #[test]
+    fn identical_models_at_distinct_pci_locations_stay_separate() {
+        let mut adapters = vec![
+            dx12_adapter("slot 1", 0x2204, "0000:01:00.0"),
+            dx12_adapter("slot 2", 0x2204, "0000:02:00.0"),
+        ];
+        retain_first_per_pci_location(&mut adapters, |info| info);
+        assert_eq!(adapters.len(), 2);
+    }
+
+    #[test]
+    fn adapters_without_a_pci_location_are_never_merged() {
+        let mut adapters = vec![dx12_adapter("a", 0x2204, ""), dx12_adapter("b", 0x2204, "")];
+        retain_first_per_pci_location(&mut adapters, |info| info);
+        assert_eq!(adapters.len(), 2);
     }
 
     #[test]
