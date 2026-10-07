@@ -98,27 +98,38 @@ fixes found during the run:
   was a core bug that affected CPU and GPU alike.
 - Windows-only `clippy -D warnings` failures in core and the CLI tests were
   fixed.
+- A 64 MiB batch was a single dispatch, which on the iGPU came within 0.6 s
+  of the 2 s TDR timeout. Batches are now split into time-budgeted
+  submissions (see "TDR margin" below).
+
+Correctness and failure semantics were re-run in full at `933547b`, which
+includes the TDR fix.
 
 ### Results
 
 The benchmark command was
 `RCOMP_WGPU_DEVICE=<id> RCOMP_WGPU_SAMPLES=5 cargo run -p rcomp-wgpu --example wgpu-lz4 --release -- <input>`.
 Warm and CPU times are medians of 5 samples. Every output was decoded and
-compared byte for byte.
+compared byte for byte. These figures were measured with the time-budgeted
+submissions (`3595927`):
 
 | Device | Input | Cold GPU | Warm GPU | CPU Fast | GPU output | CPU output |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| RTX 3090 | random, 134,217,745 B | 0.908 s | 0.664 s (193 MiB/s) | 0.213 s (601 MiB/s) | 134,225,952 B | 134,234,152 B |
-| RTX 3090 | realistic tar, 1,075,339,776 B | 3.746 s | 3.488 s (294 MiB/s) | 1.760 s (583 MiB/s) | 430,588,682 B | 400,271,413 B |
-| Radeon iGPU | random, 134,217,745 B | 3.167 s | 2.899 s (44 MiB/s) | 0.215 s (597 MiB/s) | 134,225,952 B | 134,234,152 B |
-| Radeon iGPU | realistic tar, 1,075,339,776 B | 10.778 s | 10.898 s (94 MiB/s) | 1.760 s (583 MiB/s) | 430,588,682 B | 400,271,413 B |
+| RTX 3090 | random, 134,217,745 B | 1.001 s | 0.617 s (208 MiB/s) | 0.166 s (772 MiB/s) | 134,225,952 B | 134,234,152 B |
+| RTX 3090 | realistic tar, 1,075,339,776 B | 4.243 s | 3.549 s (289 MiB/s) | 1.803 s (569 MiB/s) | 430,588,682 B | 400,271,413 B |
+| Radeon iGPU | random, 134,217,745 B | 2.628 s | 2.378 s (54 MiB/s) | 0.169 s (759 MiB/s) | 134,225,952 B | 134,234,152 B |
+| Radeon iGPU | realistic tar, 1,075,339,776 B | 13.014 s | 12.494 s (82 MiB/s) | 1.785 s (574 MiB/s) | 430,588,682 B | 400,271,413 B |
+
+With one dispatch per batch (`ec9d569`) the warm GPU times were 0.664 s,
+3.488 s, 2.899 s and 10.898 s, and the cold RTX 3090 times were 0.908 s and
+3.746 s.
 
 The iGPU rows used 3 warm samples and are for reference, not a performance
 target. The realistic input is a tar of 600 build artifacts (`.rlib`, `.rmeta`,
 `.pdb`, `.exe`, `.dll`, `.d`) from this repository's `target/debug/deps`.
 
 The portable path is slower than CPU LZ4 on both adapters: about 2x on the
-realistic tar and 3x on incompressible input on the RTX 3090. As on Apple
+realistic tar and 3–4x on incompressible input on the RTX 3090. As on Apple
 Silicon, its output is about 7.6% larger than CPU LZ4. On the 3090,
 `nvidia-smi dmon` shows 80–100% SM time while batches run, but only about
 150 W of the 390 W limit and 1–2% memory-controller use. With one invocation
@@ -128,13 +139,35 @@ few to fill 82 SMs. The kernel is serial per block, not bandwidth-bound.
 Peak working set for the CLI on the 1 GiB tar was 697 MiB with the RTX 3090,
 970 MiB with the iGPU, and 139 MiB on CPU.
 
-TDR margin: a single incompressible 64 MiB batch, the kernel's worst case,
-takes about 0.37 s on the RTX 3090 and about 1.5 s on the iGPU. The iGPU
-figure is roughly 75% of the 2 s Windows TDR timeout. No TDR, device loss, or
-display-driver event was logged during any run (System log: `nvlddmkm`,
-`Display` 4101, `dxgkrnl`, `amdkmdag`, LiveKernelEvent). One `nvlddmkm`
-event 153 was already in the log from about two hours before testing began.
-`CURRENT_ISSUES.md` tracks the iGPU margin.
+### TDR margin
+
+With one dispatch per 64 MiB batch, a single incompressible batch (the
+kernel's worst case) took 1.36 s of GPU time on the iGPU, about 70% of the
+2 s Windows TDR timeout. The RTX 3090 needed 0.23 s.
+
+A fixed split is the wrong cure. A dispatch lasts as long as its slowest
+block when the GPU runs every block at once, so splitting the RTX 3090's
+realistic batches into 256-block submissions made them 3x slower
+(3.55 s → 10.60 s). The iGPU tar slowed from 10.5 s to 18.2 s.
+
+The provider now compresses each batch in submissions sized by a per-device
+time budget. Submissions start at 128 blocks (8 MiB), double after a
+full-size submission that used at most half of a 500 ms budget, and halve
+after any overrun. Per-submission GPU time with a 128 MiB random file and the
+1 GiB tar:
+
+| Device | Worst submission, one dispatch | Worst submission, budgeted | Settled size |
+| --- | ---: | ---: | --- |
+| RTX 3090 | 228 ms | 222 ms | whole batch (1,024 blocks) |
+| Radeon iGPU, random | 1,363 ms | 282 ms | 256 blocks |
+| Radeon iGPU, tar | ~650 ms | 441 ms | 512 blocks |
+
+Output is byte-identical to the single-dispatch build. The RTX 3090 pays a
+ramp-up of about 0.5 s per process before it reaches whole batches. No TDR,
+device loss, or display-driver event was logged during any run (System log:
+`nvlddmkm`, `Display` 4101, `dxgkrnl`, `amdkmdag`, LiveKernelEvent). One
+`nvlddmkm` event 153 was already in the log from about two hours before
+testing began.
 
 ### Correctness coverage
 
@@ -161,9 +194,10 @@ Every item below passed on both adapters:
   byte-identical;
 - a real `CTRL_C_EVENT`, sent once 17–23 MiB of GPU output had been staged,
   for `.lz4` and `.tar.lz4`, with fresh and existing destinations. `rcomp`
-  exits 1 within 0.25 s (RTX 3090) or 0.67 s (iGPU) of the event, publishes no
-  output, removes its `.rcomp-*.tmp` file, and leaves an existing destination
-  byte-identical.
+  exits 1 within 0.25 s (RTX 3090) or 0.30–0.43 s (iGPU) of the event,
+  publishes no output, removes its `.rcomp-*.tmp` file, and leaves an existing
+  destination byte-identical. A cancelled batch stops after its active
+  submission.
 
 Both qualification knobs are documented in the README: `RCOMP_WGPU_DEVICE`
 selects the adapter for the hardware suite and example, and

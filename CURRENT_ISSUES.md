@@ -184,21 +184,6 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `finish(self: Box<Self>) -> Result<Box<dyn Write>>` in a minor refactor;
   don't pre-build it now.
 
-- **Where:** `crates/rcomp-wgpu/src/provider.rs` (`PORTABLE_BATCH_SIZE`, one
-  dispatch per batch)
-  **What:** Windows TDR margin on small integrated GPUs. Each 64 MiB batch is
-  one compute dispatch, and incompressible input is the kernel's worst case.
-  On the Ryzen 7 7800X3D's Radeon iGPU (2 CUs, D3D12, driver 32.0.21043.5001)
-  one 64 MiB random batch takes about 1.5 s (2.03 s CLI run minus 0.53 s fixed
-  overhead), about 75% of the 2 s Windows TDR budget. No TDR occurred in any
-  run (the iGPU was not driving a display). A slower adapter, an iGPU that also
-  drives the desktop, or a power-limited laptop could cross 2 s and lose the
-  device. The RTX 3090 needs about 0.37 s for the same batch.
-  **Fix:** Before any wider rollout, bound GPU time per submission rather than
-  per batch: split a batch into several smaller dispatches/submits (for
-  example 16 MiB each), or derive the batch ceiling from measured per-device
-  throughput. Add a regression test that asserts the per-submission block cap.
-
 - **Where:** `crates/rcomp-wgpu/src/shaders/lz4.wgsl` (one invocation per
   64 KiB block)
   **What:** The portable kernel under-occupies large discrete GPUs. A 64 MiB
@@ -252,6 +237,21 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 
 ## Resolved
+
+- **Where:** `crates/rcomp-wgpu/src/provider.rs` (one dispatch per batch)
+  **Outcome:** Resolved. Each 64 MiB batch was a single compute dispatch. On
+  the Ryzen 7 7800X3D's Radeon iGPU, an incompressible batch took 1.36 s of
+  GPU time, about 70% of the 2 s Windows TDR timeout. Batches are now
+  compressed in submissions sized by a per-device 500 ms time budget
+  (`SubmissionBudget`). They start at 8 MiB, double while 2x the last time
+  fits, and halve on an overrun. The worst submission is now 282 ms
+  (random input) or 441 ms (realistic tar) on the iGPU, and 222 ms on an
+  RTX 3090, which still runs whole batches. A fixed split was rejected
+  because it made the RTX 3090 3x slower on realistic data. Unit tests drive
+  the controller with the measured narrow and wide device behaviour.
+  Remaining cost: about 0.5 s of ramp-up per process on wide GPUs, and the
+  iGPU tar is 15% slower (10.9 s → 12.5 s). If the ramp-up matters, persist
+  the learned size per device or start larger once a device is known.
 
 - **Where:** `crates/rcomp-core/src/ops.rs` — `extract()`'s `output_bytes`.
   **Outcome:** Resolved — `output_bytes` was computed by recursively summing
