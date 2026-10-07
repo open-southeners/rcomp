@@ -7,7 +7,9 @@
 //! The `sha256sum_available` guard gates tests that invoke `sha256sum` so they
 //! are skipped gracefully on platforms where the tool is absent.
 
-use std::{fs, path::PathBuf, process::Command as StdCommand};
+#[cfg(unix)]
+use std::process::Command as StdCommand;
+use std::{fs, path::PathBuf};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -25,6 +27,7 @@ fn rcomp() -> Command {
 /// Return `true` when `sha256sum` is available on `$PATH`.
 ///
 /// Used to gate tests that verify the sidecar with the real coreutils tool.
+#[cfg(unix)]
 fn sha256sum_available() -> bool {
     StdCommand::new("sha256sum")
         .arg("--version")

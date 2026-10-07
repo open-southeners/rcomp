@@ -10,6 +10,7 @@
    */
   import { FORMATS } from "../formats";
   import type { Appearance } from "../theme";
+  import type { AccelerationPreference } from "../preferences";
 
   interface Props {
     appearance: Appearance;
@@ -18,10 +19,20 @@
      *  per-content default — see `defaultFormat` in `../formats`). */
     defaultFormat: string | null;
     onChangeDefaultFormat: (format: string | null) => void;
+    acceleration: AccelerationPreference;
+    onChangeAcceleration: (value: AccelerationPreference) => void;
     onClose: () => void;
   }
 
-  let { appearance, onChange, defaultFormat, onChangeDefaultFormat, onClose }: Props = $props();
+  let {
+    appearance,
+    onChange,
+    defaultFormat,
+    onChangeDefaultFormat,
+    acceleration,
+    onChangeAcceleration,
+    onClose,
+  }: Props = $props();
 
   const OPTIONS: { value: Appearance; label: string }[] = [
     { value: "auto", label: "Auto" },
@@ -32,6 +43,10 @@
   function handleFormatChange(e: Event): void {
     const value = (e.currentTarget as HTMLSelectElement).value;
     onChangeDefaultFormat(value === "" ? null : value);
+  }
+
+  function handleAccelerationChange(e: Event): void {
+    onChangeAcceleration((e.currentTarget as HTMLSelectElement).value as AccelerationPreference);
   }
 </script>
 
@@ -69,6 +84,18 @@
       {#each FORMATS as fmt (fmt.name)}
         <option value={fmt.name}>{fmt.label}</option>
       {/each}
+    </select>
+  </div>
+
+  <div class="setting-row">
+    <div class="setting-copy">
+      <span class="setting-label">Hardware Acceleration</span>
+      <span class="setting-hint">Automatic uses a compatible GPU when available and reports CPU fallback.</span>
+    </div>
+    <select class="select-input" value={acceleration} onchange={handleAccelerationChange}>
+      <option value="auto">Automatic</option>
+      <option value="cpu">CPU only</option>
+      <option value="required">Require GPU</option>
     </select>
   </div>
 </div>

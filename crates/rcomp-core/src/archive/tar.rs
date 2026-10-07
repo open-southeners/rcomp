@@ -34,11 +34,16 @@ use std::{
 use filetime::FileTime;
 use tar::{Archive, Builder, EntryType, Header};
 
-use crate::{Error, Result, progress::Entry, walk::WalkEntry};
+use crate::{Result, progress::Entry, walk::WalkEntry};
 
+#[cfg(unix)]
+use super::sanitize::sanitize_link_target;
 use super::{
     OpCtx,
-    sanitize::{sanitize_entry_path, sanitize_link_target},
+    sanitize::{
+        is_root_entry, prepare_dir, prepare_leaf, reject_symlinks_below, safe_mode,
+        sanitize_entry_path,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -219,12 +224,12 @@ struct CountingReader<'a, 'b, R: Read> {
 impl<R: Read> Read for CountingReader<'_, '_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // Check for cancellation before each read so long archives are
-        // responsive to cancel signals.
+        // responsive to cancel signals. This must not use
+        // `ErrorKind::Interrupted`: `append_data` copies with `io::copy`, which
+        // retries `Interrupted` forever, so cancellation would spin instead of
+        // unwinding.
         if self.ctx.cancel.is_cancelled() {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "operation cancelled",
-            ));
+            return Err(io::Error::other(crate::Error::Cancelled));
         }
         let n = self.inner.read(buf)?;
         if n > 0 {
@@ -299,6 +304,9 @@ pub(crate) fn extract<'r>(
 
         // Retrieve the raw path from the header before processing.
         let raw_path = entry.path()?.into_owned();
+        if entry.header().entry_type().is_dir() && is_root_entry(&raw_path) {
+            continue;
+        }
         let out_path = sanitize_entry_path(dest, &raw_path)?;
 
         let entry_name = raw_path.to_string_lossy().into_owned();
@@ -308,22 +316,15 @@ pub(crate) fn extract<'r>(
         let entry_type = entry.header().entry_type();
 
         if entry_type.is_dir() {
-            fs::create_dir_all(&out_path)?;
+            prepare_dir(dest, &out_path)?;
             // Collect the directory mode for deferred application.
             #[cfg(unix)]
             if let Ok(mode) = entry.header().mode() {
-                dir_modes.push((out_path.clone(), mode));
+                dir_modes.push((out_path.clone(), safe_mode(mode)));
             }
         } else if entry_type.is_file() {
-            // Ensure parent directory exists.
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            // Overwrite check.
-            if !overwrite && out_path.exists() {
-                return Err(Error::AlreadyExists { path: out_path });
-            }
-            let mode = entry.header().mode().ok();
+            prepare_leaf(dest, &out_path, overwrite)?;
+            let mode = entry.header().mode().ok().map(safe_mode);
             let mut file = fs::File::create(&out_path)?;
             // Use counter-syncing copy so that progress.bytes_done reflects
             // compressed bytes consumed (via the AtomicCountingReader upstream)
@@ -360,12 +361,7 @@ pub(crate) fn extract<'r>(
             #[cfg(unix)]
             {
                 sanitize_link_target(dest, &out_path, &link_target)?;
-                if let Some(parent) = out_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                if !overwrite && out_path.symlink_metadata().is_ok() {
-                    return Err(Error::AlreadyExists { path: out_path });
-                }
+                prepare_leaf(dest, &out_path, overwrite)?;
                 std::os::unix::fs::symlink(&link_target, &out_path)?;
             }
             #[cfg(not(unix))]
@@ -386,12 +382,10 @@ pub(crate) fn extract<'r>(
 
             // Hard link targets in tar are always relative to the archive root.
             let target_path = sanitize_entry_path(dest, &link_target)?;
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            if !overwrite && out_path.exists() {
-                return Err(Error::AlreadyExists { path: out_path });
-            }
+            // `link(2)` follows a symlink target on some platforms (macOS), so
+            // the target must be reachable without any symlink.
+            reject_symlinks_below(dest, &target_path)?;
+            prepare_leaf(dest, &out_path, overwrite)?;
             fs::hard_link(&target_path, &out_path)?;
         } else {
             // Unknown / unsupported entry type (device nodes, FIFOs, etc.) —
@@ -938,6 +932,7 @@ mod tests {
 
     /// Build a tar archive with a single symlink entry.  Both the link path
     /// and link target are written as raw bytes to bypass path validation.
+    #[cfg(unix)]
     fn make_malicious_symlink_tar(link_path: &[u8], link_target: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
         let mut header = Header::new_gnu();
@@ -1081,6 +1076,206 @@ mod tests {
         assert!(
             std::fs::symlink_metadata(dest.path().join("link.txt")).is_err(),
             "link.txt must not exist in dest"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Symlink-chain / pre-existing-symlink escapes and unsafe mode bits
+    // -----------------------------------------------------------------------
+
+    /// One raw entry for [`make_tar`]: `(type, path, link name or file body, mode)`.
+    type RawEntry<'a> = (EntryType, &'a [u8], &'a [u8], u32);
+
+    /// Build a multi-entry tar with raw path / link-name bytes (no validation).
+    /// For symlinks and hard links the third field is the link name; for
+    /// regular files it is the body.
+    fn make_tar(entries: &[RawEntry<'_>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut builder = Builder::new(&mut buf);
+        for &(kind, path, extra, mode) in entries {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(kind);
+            header.set_mode(mode);
+            let name_field = &mut header.as_old_mut().name;
+            name_field[..path.len()].copy_from_slice(path);
+            let body: &[u8] = if kind == EntryType::Regular {
+                extra
+            } else {
+                let link_field = &mut header.as_old_mut().linkname;
+                link_field[..extra.len()].copy_from_slice(extra);
+                &[]
+            };
+            header.set_size(body.len() as u64);
+            header.set_cksum();
+            builder.append(&header, body).expect("append failed");
+        }
+        builder.into_inner().unwrap();
+        buf
+    }
+
+    fn extract_bytes(tar_bytes: &[u8], dest: &Path, overwrite: bool) -> crate::Result<()> {
+        let token = CancelToken::default();
+        let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
+        let mut ctx = make_ctx!(token, &mut *cb);
+        extract(
+            Box::new(Cursor::new(tar_bytes)),
+            dest,
+            overwrite,
+            &mut ctx,
+            None,
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_chain_escape_rejected() {
+        // Each link is lexically inside dest, but `s2` really resolves to
+        // dest's parent once `d/s1` exists on disk; `s2/pwned` must not land
+        // outside dest.
+        let root = TempDir::new().unwrap();
+        let dest = root.path().join("out");
+        std::fs::create_dir(&dest).unwrap();
+        let tar_bytes = make_tar(&[
+            (EntryType::Directory, b"d", b"", 0o755),
+            (EntryType::Symlink, b"d/s1", b"..", 0o777),
+            (EntryType::Symlink, b"s2", b"d/s1/..", 0o777),
+            (EntryType::Regular, b"s2/pwned", b"pwned", 0o644),
+        ]);
+
+        let err = extract_bytes(&tar_bytes, &dest, false).unwrap_err();
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
+        );
+        assert!(!root.path().join("pwned").exists(), "file escaped dest");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preexisting_symlink_in_dest_not_followed() {
+        let root = TempDir::new().unwrap();
+        let outside = root.path().join("outside");
+        let dest = root.path().join("out");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("sub")).unwrap();
+        let tar_bytes = make_tar(&[(EntryType::Regular, b"sub/f", b"x", 0o644)]);
+
+        let err = extract_bytes(&tar_bytes, &dest, true).unwrap_err();
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
+        );
+        assert!(!outside.join("f").exists(), "file written through symlink");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_at_output_is_replaced_not_followed() {
+        let root = TempDir::new().unwrap();
+        let outside = root.path().join("outside");
+        let dest = root.path().join("out");
+        std::fs::create_dir(&dest).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("f")).unwrap();
+        let tar_bytes = make_tar(&[(EntryType::Regular, b"f", b"data", 0o644)]);
+
+        // Without overwrite a dangling symlink still counts as existing.
+        let err = extract_bytes(&tar_bytes, &dest, false).unwrap_err();
+        assert!(
+            matches!(err, Error::AlreadyExists { .. }),
+            "expected AlreadyExists, got {err:?}"
+        );
+
+        // With overwrite the link itself is replaced by a regular file.
+        extract_bytes(&tar_bytes, &dest, true).unwrap();
+        assert!(!outside.exists(), "write followed the symlink");
+        let meta = std::fs::symlink_metadata(dest.join("f")).unwrap();
+        assert!(meta.is_file());
+        assert_eq!(std::fs::read(dest.join("f")).unwrap(), b"data");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwrite_replaces_existing_symlink_entry() {
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[
+            (EntryType::Regular, b"a", b"a", 0o644),
+            (EntryType::Symlink, b"link", b"a", 0o777),
+        ]);
+        extract_bytes(&tar_bytes, dest.path(), false).unwrap();
+        extract_bytes(&tar_bytes, dest.path(), true).unwrap();
+        assert_eq!(
+            std::fs::read_link(dest.path().join("link")).unwrap(),
+            Path::new("a")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_through_symlink_rejected() {
+        let root = TempDir::new().unwrap();
+        let outside = root.path().join("outside");
+        let dest = root.path().join("out");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret"), b"secret").unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("ln")).unwrap();
+        let tar_bytes = make_tar(&[(EntryType::Link, b"h", b"ln/secret", 0o644)]);
+
+        let err = extract_bytes(&tar_bytes, &dest, false).unwrap_err();
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
+        );
+        assert!(!dest.join("h").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn setuid_setgid_sticky_bits_stripped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[
+            (EntryType::Directory, b"d", b"", 0o3755),
+            (EntryType::Regular, b"d/suid", b"x", 0o4755),
+            (EntryType::Regular, b"d/sgid", b"x", 0o2755),
+        ]);
+        extract_bytes(&tar_bytes, dest.path(), false).unwrap();
+
+        let mode = |p: &str| {
+            std::fs::metadata(dest.path().join(p))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(mode("d"), 0o755);
+        assert_eq!(mode("d/suid"), 0o755);
+        assert_eq!(mode("d/sgid"), 0o755);
+    }
+
+    #[test]
+    fn dot_root_directory_entry_is_skipped() {
+        // `tar -C dir -czf x.tgz .` starts with a `./` directory entry.
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[
+            (EntryType::Directory, b"./", b"", 0o755),
+            (EntryType::Regular, b"./a.txt", b"a", 0o644),
+        ]);
+        extract_bytes(&tar_bytes, dest.path(), false).unwrap();
+        assert_eq!(std::fs::read(dest.path().join("a.txt")).unwrap(), b"a");
+    }
+
+    #[test]
+    fn dot_root_file_entry_still_rejected() {
+        let dest = TempDir::new().unwrap();
+        let tar_bytes = make_tar(&[(EntryType::Regular, b"./", b"x", 0o644)]);
+        let err = extract_bytes(&tar_bytes, dest.path(), false).unwrap_err();
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
         );
     }
 }

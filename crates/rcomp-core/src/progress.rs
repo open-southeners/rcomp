@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::archive::OpCtx;
+use crate::{AccelerationFallbackReason, ProcessingBackend, archive::OpCtx};
 
 /// A snapshot of progress for a running compress or extract operation.
 ///
@@ -92,6 +92,13 @@ pub struct Report {
     ///
     /// `None` for zip, 7z, and when `checksum` is `false`.
     pub content_sha256: Option<String>,
+    /// Processing backend selected for the operation.
+    pub backend: ProcessingBackend,
+    /// User-visible explanation when automatic acceleration fell back to CPU.
+    pub acceleration_notice: Option<String>,
+    /// Stable machine-readable reason paired with [`Self::acceleration_notice`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub acceleration_fallback: Option<AccelerationFallbackReason>,
 }
 
 impl Report {
@@ -214,6 +221,9 @@ mod tests {
             duration: Duration::from_millis(10),
             sha256: None,
             content_sha256: None,
+            backend: ProcessingBackend::Cpu,
+            acceleration_notice: None,
+            acceleration_fallback: None,
         };
         let ratio = report.ratio();
         assert!(
@@ -232,6 +242,9 @@ mod tests {
             duration: Duration::ZERO,
             sha256: None,
             content_sha256: None,
+            backend: ProcessingBackend::Cpu,
+            acceleration_notice: None,
+            acceleration_fallback: None,
         };
         assert_eq!(report.ratio(), 0.0);
     }
@@ -247,6 +260,9 @@ mod tests {
             duration: Duration::from_nanos(1),
             sha256: None,
             content_sha256: None,
+            backend: ProcessingBackend::Cpu,
+            acceleration_notice: None,
+            acceleration_fallback: None,
         };
         assert!(report.ratio() > 1.0);
     }
@@ -327,6 +343,7 @@ mod tests {
         use std::time::Duration;
 
         use crate::{
+            AccelerationFallbackReason, ProcessingBackend,
             format::{Codec, Container, Format},
             progress::Report,
         };
@@ -357,6 +374,9 @@ mod tests {
                 duration: Duration::from_millis(42),
                 sha256: Some("abc123".to_string()),
                 content_sha256: None,
+                backend: ProcessingBackend::Cpu,
+                acceleration_notice: Some("CPU fallback".to_string()),
+                acceleration_fallback: Some(AccelerationFallbackReason::ExperimentalCapability),
             };
             let json = serde_json::to_string(&original).expect("serialise Report");
             let decoded: Report = serde_json::from_str(&json).expect("deserialise Report");
@@ -367,6 +387,12 @@ mod tests {
             assert_eq!(decoded.duration, original.duration);
             assert_eq!(decoded.sha256, original.sha256);
             assert_eq!(decoded.content_sha256, original.content_sha256);
+            assert_eq!(decoded.backend, original.backend);
+            assert_eq!(decoded.acceleration_notice, original.acceleration_notice);
+            assert_eq!(
+                decoded.acceleration_fallback,
+                original.acceleration_fallback
+            );
         }
     }
 }

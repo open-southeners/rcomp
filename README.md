@@ -36,6 +36,7 @@ release is tagged. See [RELEASING.md](RELEASING.md) for the release runbook.
 ```
 rcomp /path/to/folder compressed.bz2     # picks bzip2 from the extension, tars the folder transparently
 rcomp big.iso big.iso.zst --edge         # max zstd compression
+rcomp big.iso big.iso.zst --accelerator auto # use hardware when compatible
 rcomp archive.7z                         # detects 7z by magic bytes, extracts to cwd
 rcomp archive.7z ~/restored              # ...or into an explicit destination folder
 rcomp ls archive.zip                     # list entries without extracting
@@ -58,6 +59,7 @@ rcomp man                           # print a troff man page to stdout
       --fast             Fastest compression
       --best             Balanced (default)
       --edge             Maximum compression ratio, hardware expensive
+      --accelerator <MODE>  Hardware acceleration: auto, cpu, or required
   -c, --compress         Force compress mode (for re-compressing a .gz, etc.)
   -x, --extract          Force extract mode
       --unwrap           Extract entries directly into the destination
@@ -74,6 +76,65 @@ rcomp man                           # print a troff man page to stdout
   -f, --force            Overwrite existing output
   -q, --quiet            No progress output
 ```
+
+### Hardware acceleration selection
+
+Acceleration policy can be selected once with `--accelerator <MODE>` or kept
+for CLI invocations with the `RCOMP_ACCELERATOR` environment variable. A CLI
+argument takes precedence over the environment.
+
+| Mode | Behavior |
+| --- | --- |
+| `cpu` | Always use the canonical CPU codec implementation (default). |
+| `auto` | Use a compatible accelerator when available; otherwise continue on CPU and print a warning. |
+| `required` | Require compatible hardware and fail clearly if it is unavailable. |
+
+For example, `export RCOMP_ACCELERATOR=auto` enables automatic selection for
+subsequent commands. The desktop app exposes the same choices under **Settings
+→ Hardware Acceleration**. Availability is matched to the operation and format;
+a GPU being present by itself does not imply that a codec can use it.
+
+An experimental portable provider is available with the `wgpu` Cargo feature.
+It uses Direct3D 12 on Windows, Vulkan on Linux, and Metal on Apple Silicon,
+with one WGSL kernel for compatible Intel, NVIDIA, AMD, and Apple GPUs. The
+first capability supports `.lz4` and `.tar.lz4` compression at `--fast` and is
+deliberately excluded from `auto` while the hardware qualification matrix is
+being built:
+
+```sh
+cargo run -p rcomp --features wgpu -- input.bin output.lz4 --fast --accelerator required
+```
+
+Inspect the compiled providers and copy an exact device identifier with:
+
+```sh
+cargo run -p rcomp --features wgpu -- hardware
+cargo run -p rcomp --features wgpu -- input.bin output.lz4 --fast \
+  --accelerator required --accelerator-device wgpu:BACKEND:VENDOR:DEVICE:ORDINAL
+```
+
+`RCOMP_ACCELERATOR_DEVICE` is the environment-variable equivalent of
+`--accelerator-device`. The hardware inventory includes backend/driver details,
+buffer limits, the selected batch size, and exact experimental capabilities.
+
+An experimental native Metal provider is available on macOS builds compiled
+with the `metal` Cargo feature. It currently supports `.lz4` and `.tar.lz4`
+compression at `--fast`. Because its first correctness-oriented kernel is
+still being evaluated across Apple Silicon generations, `auto` deliberately
+reports a CPU fallback; use `--accelerator required` to opt into the
+experimental provider explicitly. On the current M3 Max test machine it is
+about 37% faster than CPU LZ4 on a fixed 573 MiB dependency corpus, but remains
+about 2× slower on a 71 MiB directory because fixed setup costs dominate:
+
+```sh
+cargo run -p rcomp --features metal -- input.bin output.lz4 --fast --accelerator required
+```
+
+The desktop backend has the same `wgpu` and `metal` features. Native Metal is
+currently retained as an Apple performance reference while the portable Metal
+path is measured. Other formats, compression levels, archive wrappers beyond
+tar-over-LZ4, and GPU decompression remain on CPU or fail when GPU use is
+required.
 
 ### Inference rules
 

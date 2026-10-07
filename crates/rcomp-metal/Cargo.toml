@@ -1,0 +1,44 @@
+[package]
+name = "rcomp-metal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Experimental native Metal compute provider for rcomp"
+readme = "README.md"
+keywords.workspace = true
+categories = ["compression"]
+
+[dependencies]
+rcomp-core = { path = "../rcomp-core", version = "0.3.3", default-features = false }
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3.1"
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "dispatch2",
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLComputeCommandEncoder",
+    "MTLComputePipeline",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLTypes",
+] }
+
+[[example]]
+name = "metal-smoke"
+path = "examples/metal_smoke.rs"
+
+[[example]]
+name = "metal-lz4"
+path = "examples/metal_lz4.rs"
+
+[dev-dependencies]
+lz4.workspace = true

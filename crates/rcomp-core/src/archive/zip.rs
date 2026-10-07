@@ -31,14 +31,16 @@ use std::{
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
-    Error, Level, Result,
+    Level, Result,
     progress::{Entry, copy_with_progress},
     walk::WalkEntry,
 };
 
+#[cfg(unix)]
+use super::sanitize::{safe_mode, sanitize_link_target};
 use super::{
     OpCtx,
-    sanitize::{sanitize_entry_path, sanitize_link_target},
+    sanitize::{is_root_entry, prepare_dir, prepare_leaf, sanitize_entry_path},
 };
 
 // ---------------------------------------------------------------------------
@@ -367,18 +369,20 @@ pub(crate) fn extract(
         // Sanitize the raw entry path using OUR sanitizer — do not rely solely
         // on the zip crate's enclosed_name which silently drops `..` components.
         let raw_path = Path::new(&raw_name);
+        if is_dir && is_root_entry(raw_path) {
+            continue;
+        }
         let out_path = sanitize_entry_path(dest, raw_path)?;
 
         ctx.set_entry(&raw_name);
         ctx.check_cancel()?;
 
         if is_dir {
-            fs::create_dir_all(&out_path)?;
+            prepare_dir(dest, &out_path)?;
             // Collect the directory mode for deferred application.
             #[cfg(unix)]
             if let Some(mode) = unix_mode {
-                // Only restore the lower 12 bits (type + permissions).
-                let perm_bits = mode & 0o7777;
+                let perm_bits = safe_mode(mode);
                 if perm_bits != 0 {
                     dir_modes.push((out_path.clone(), perm_bits));
                 }
@@ -405,12 +409,7 @@ pub(crate) fn extract(
             #[cfg(unix)]
             {
                 sanitize_link_target(dest, &out_path, link_target)?;
-                if let Some(parent) = out_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                if !overwrite && out_path.symlink_metadata().is_ok() {
-                    return Err(Error::AlreadyExists { path: out_path });
-                }
+                prepare_leaf(dest, &out_path, overwrite)?;
                 std::os::unix::fs::symlink(link_target, &out_path)?;
             }
             #[cfg(not(unix))]
@@ -421,12 +420,7 @@ pub(crate) fn extract(
             }
         } else {
             // Regular file.
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            if !overwrite && out_path.exists() {
-                return Err(Error::AlreadyExists { path: out_path });
-            }
+            prepare_leaf(dest, &out_path, overwrite)?;
             {
                 let mut entry = zip
                     .by_index(idx)
@@ -437,8 +431,7 @@ pub(crate) fn extract(
             // Restore unix permissions from the zip entry's external attributes.
             #[cfg(unix)]
             if let Some(mode) = unix_mode {
-                // Only restore the lower 12 bits (type + permissions).
-                let perm_bits = mode & 0o7777;
+                let perm_bits = safe_mode(mode);
                 if perm_bits != 0 {
                     use std::os::unix::fs::PermissionsExt;
                     fs::set_permissions(&out_path, fs::Permissions::from_mode(perm_bits))?;
@@ -942,5 +935,94 @@ mod tests {
             std::fs::symlink_metadata(dest.path().join("link.txt")).is_err(),
             "link.txt must not exist in dest"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Symlink-chain escape and unsafe mode bits
+    // -----------------------------------------------------------------------
+
+    /// Write a zip built by `build` to a temp file and extract it into `dest`.
+    fn extract_crafted(
+        dest: &Path,
+        build: impl FnOnce(&mut ZipWriter<&mut std::io::Cursor<Vec<u8>>>),
+    ) -> crate::Result<()> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buf);
+            build(&mut zip);
+            zip.finish().unwrap();
+        }
+        let tmp = TempDir::new().unwrap();
+        let zip_path = tmp.path().join("crafted.zip");
+        std::fs::write(&zip_path, buf.into_inner()).unwrap();
+
+        let token = CancelToken::default();
+        let mut cb: Box<dyn FnMut(&Progress)> = Box::new(|_| {});
+        let mut ctx = make_ctx!(token, &mut *cb);
+        extract(&zip_path, dest, false, &mut ctx).map(|_| ())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zip_slip_symlink_chain_rejected() {
+        // `d/s1 -> ..` and `s2 -> d/s1/..` are each lexically inside dest,
+        // but together `s2` points at dest's parent.
+        let root = TempDir::new().unwrap();
+        let dest = root.path().join("out");
+        std::fs::create_dir(&dest).unwrap();
+
+        let err = extract_crafted(&dest, |zip| {
+            let options = SimpleFileOptions::default();
+            zip.add_symlink("d/s1", "..", options).unwrap();
+            zip.add_symlink("s2", "d/s1/..", options).unwrap();
+            zip.start_file("s2/pwned", options).unwrap();
+            zip.write_all(b"pwned").unwrap();
+        })
+        .unwrap_err();
+
+        assert!(
+            matches!(err, Error::PathTraversal { .. }),
+            "expected PathTraversal, got {err:?}"
+        );
+        assert!(!root.path().join("pwned").exists(), "file escaped dest");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn setuid_setgid_sticky_bits_stripped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dest = TempDir::new().unwrap();
+        extract_crafted(dest.path(), |zip| {
+            let dir = SimpleFileOptions::default().unix_permissions(0o3755);
+            zip.add_directory("d", dir).unwrap();
+            let file = SimpleFileOptions::default().unix_permissions(0o4755);
+            zip.start_file("d/suid", file).unwrap();
+            zip.write_all(b"x").unwrap();
+        })
+        .unwrap();
+
+        let mode = |p: &str| {
+            std::fs::metadata(dest.path().join(p))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(mode("d"), 0o755);
+        assert_eq!(mode("d/suid"), 0o755);
+    }
+
+    #[test]
+    fn dot_root_directory_entry_is_skipped() {
+        let dest = TempDir::new().unwrap();
+        extract_crafted(dest.path(), |zip| {
+            let options = SimpleFileOptions::default();
+            zip.add_directory("./", options).unwrap();
+            zip.start_file("./a.txt", options).unwrap();
+            zip.write_all(b"a").unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(dest.path().join("a.txt")).unwrap(), b"a");
     }
 }

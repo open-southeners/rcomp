@@ -183,6 +183,50 @@ fn compress_with_algo_bzip2_extensionless_output() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: `./`-prefixed tarball (as `tar -C dir -cf x.tar .` writes) extracts
+// and is wrapped like any other multi-root archive
+// ---------------------------------------------------------------------------
+
+#[test]
+fn extract_dot_prefixed_tar_is_wrapped() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("dotted.tar");
+    {
+        let mut builder = tar::Builder::new(fs::File::create(&archive).unwrap());
+        let mut dir = tar::Header::new_gnu();
+        dir.set_entry_type(tar::EntryType::Directory);
+        dir.set_mode(0o755);
+        dir.set_size(0);
+        builder
+            .append_data(&mut dir, "./", std::io::empty())
+            .unwrap();
+        for name in ["./a.txt", "./b.txt"] {
+            let mut file = tar::Header::new_gnu();
+            file.set_mode(0o644);
+            file.set_size(1);
+            builder.append_data(&mut file, name, &b"x"[..]).unwrap();
+        }
+        builder.finish().unwrap();
+    }
+
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    rcomp()
+        .args([archive.to_str().unwrap(), dest.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(
+        dest.join("dotted/a.txt").is_file(),
+        "a.txt inside wrap folder"
+    );
+    assert!(
+        dest.join("dotted/b.txt").is_file(),
+        "b.txt inside wrap folder"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test: extract .tar.gz → wrap folder appears for multi-root archive
 // ---------------------------------------------------------------------------
 

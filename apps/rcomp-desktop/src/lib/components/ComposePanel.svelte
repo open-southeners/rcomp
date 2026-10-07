@@ -9,7 +9,7 @@
    * and removing items is delegated to the parent workspace.
    */
   import { onMount, onDestroy } from "svelte";
-  import { pickSavePath, confirmDialog } from "../dialogs";
+  import { pickSavePath, confirmDialog, warningDialog } from "../dialogs";
   import { compressMany, writeSidecar, onMenuCompress } from "../ipc";
   import {
     CODECS,
@@ -23,19 +23,21 @@
     type ContainerName,
   } from "../formats";
   import type { StagedItem, ProgressEvent, Report, IpcError } from "../types";
+  import type { AccelerationPreference } from "../preferences";
 
   interface Props {
     items: StagedItem[];
     /** User's pinned default format from Settings, or `null` for "Auto"
      *  (per-content smart default — see `defaultFormat` in `../formats`). */
     defaultFormatPref: string | null;
+    acceleration: AccelerationPreference;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string) => void;
     onError: (err: IpcError) => void;
   }
 
-  let { items, defaultFormatPref, onRunning, onProgress, onDone, onError }: Props = $props();
+  let { items, defaultFormatPref, acceleration, onRunning, onProgress, onDone, onError }: Props = $props();
 
   let container = $state<ContainerName>("tar");
   let codec = $state<string | null>("zstd");
@@ -146,6 +148,7 @@
       gitignore,
       exclude: parseExclude(excludeText),
       checksum,
+      acceleration,
     };
 
     try {
@@ -160,8 +163,13 @@
       if (checksum && report.sha256) {
         try {
           await writeSidecar(outputPath, report.sha256, report.content_sha256);
-        } catch {
-          // Sidecar write failure is non-fatal; continue to show summary.
+        } catch (err: unknown) {
+          // The archive itself is fine, so still show the summary, but tell
+          // the user the checksum file they asked for is missing.
+          await warningDialog(
+            `The archive was created, but its checksum file could not be written: ${(err as IpcError).message ?? err}`,
+            "Checksum file not written",
+          );
         }
       }
 

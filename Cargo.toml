@@ -27,7 +27,7 @@ zip = "8.6.0"
 filetime = "0.2"
 sevenz-rust2 = "0.21.0"
 unrar = "0.5.8"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 indicatif = "0.18"
 clap_complete = "4"
@@ -37,3 +37,5 @@ predicates = "3"
 ignore = "0.4"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
+pollster = "0.4"
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }

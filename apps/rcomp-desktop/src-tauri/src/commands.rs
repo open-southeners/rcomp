@@ -12,8 +12,9 @@
 use std::{fs, path::Path, str::FromStr, time::Instant};
 
 use rcomp_core::{
-    CompressOptions, Entry, Error as CoreError, ExtractOptions, Format, Level, Report, detect,
-    distinct_roots, format_sidecar, list, parse_sidecar, wrap_dir_name,
+    AccelerationPreference, CompressOptions, Engine, Entry, Error as CoreError, ExtractOptions,
+    Format, Level, ProviderRegistry, Report, detect, distinct_roots, format_sidecar, list,
+    parse_sidecar, wrap_dir_name,
 };
 
 use crate::{
@@ -41,6 +42,9 @@ pub struct CompressOpts {
     pub exclude: Vec<String>,
     /// When `true`, compute and return SHA-256 checksums for the output.
     pub checksum: bool,
+    /// Hardware-acceleration preference selected in Settings.
+    #[serde(default)]
+    pub acceleration: AccelerationPreference,
 }
 
 /// Deserialised options forwarded from the frontend for an extract operation.
@@ -54,6 +58,9 @@ pub struct ExtractOpts {
     pub verify_sha256: Option<String>,
     /// Expected SHA-256 digest of the decompressed content stream (lowercase hex).
     pub verify_content_sha256: Option<String>,
+    /// Hardware-acceleration preference selected in Settings.
+    #[serde(default)]
+    pub acceleration: AccelerationPreference,
 }
 
 /// Filesystem metadata snapshot returned by the `inspect` command.
@@ -168,76 +175,21 @@ pub fn do_compress(
     opts: CompressOpts,
     sink: &mut dyn FnMut(ProgressEvent),
 ) -> Result<Report, IpcError> {
-    // Parse the optional format override.
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
+    let format = parse_format(opts.format.as_deref())?;
     // Register the job and obtain a cancel token.  This also overwrites any
     // stale entry with the same id (documented behaviour in JobRegistry).
-    let token = reg.register(job_id.to_string());
-
-    let core_opts = CompressOptions {
-        format,
-        level: opts.level.unwrap_or_default(),
-        overwrite: opts.overwrite,
-        cancel: token,
-        follow_gitignore: opts.gitignore,
-        exclude: opts.exclude,
-        checksum: opts.checksum,
-    };
-
-    let mut throttle = ProgressThrottle::default();
-
-    // Track the last seen progress so we can synthesise a final event.
-    let mut last_progress: Option<rcomp_core::Progress> = None;
-
-    let result = rcomp_core::compress(input, output, &core_opts, |p| {
-        last_progress = Some(p.clone());
-        if throttle.should_forward(p, Instant::now()) {
-            sink(ProgressEvent::from(p));
-        }
-    });
-
+    let core_opts = compress_options(opts, format, reg.register(job_id.to_string()));
+    let result = run_compress(input, output, &core_opts, sink);
     // Always remove the registry entry, regardless of outcome.
     reg.finish(job_id);
-
-    match result {
-        Ok(report) => {
-            // Send an unconditional final progress event so the frontend always
-            // receives a terminal snapshot on success.
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                // No progress callbacks fired (e.g. empty input): synthesise a
-                // completion event from the report.
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            sink(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+    result
 }
 
 /// Compress multiple `inputs` into a single archive at `output`.
 ///
 /// The Tauri-free inner used by tests; mirrors [`do_compress`] in its
 /// registration, throttle, and final-event guarantee semantics but bundles all
-/// `inputs` into one archive via [`rcomp_core::compress_many`].
+/// `inputs` into one archive via [`Engine::compress_many`].
 pub fn do_compress_many(
     reg: &JobRegistry,
     job_id: &str,
@@ -246,59 +198,11 @@ pub fn do_compress_many(
     opts: CompressOpts,
     sink: &mut dyn FnMut(ProgressEvent),
 ) -> Result<Report, IpcError> {
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
-    let token = reg.register(job_id.to_string());
-
-    let core_opts = CompressOptions {
-        format,
-        level: opts.level.unwrap_or_default(),
-        overwrite: opts.overwrite,
-        cancel: token,
-        follow_gitignore: opts.gitignore,
-        exclude: opts.exclude,
-        checksum: opts.checksum,
-    };
-
-    let mut throttle = ProgressThrottle::default();
-    let mut last_progress: Option<rcomp_core::Progress> = None;
-
-    let result = rcomp_core::compress_many(inputs, output, &core_opts, |p| {
-        last_progress = Some(p.clone());
-        if throttle.should_forward(p, Instant::now()) {
-            sink(ProgressEvent::from(p));
-        }
-    });
-
+    let format = parse_format(opts.format.as_deref())?;
+    let core_opts = compress_options(opts, format, reg.register(job_id.to_string()));
+    let result = run_compress_many(inputs, output, &core_opts, sink);
     reg.finish(job_id);
-
-    match result {
-        Ok(report) => {
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            sink(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+    result
 }
 
 /// Extract `input` into `dest` using the options in `opts`.
@@ -313,57 +217,11 @@ pub fn do_extract(
     opts: ExtractOpts,
     sink: &mut dyn FnMut(ProgressEvent),
 ) -> Result<Report, IpcError> {
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
-    let token = reg.register(job_id.to_string());
-
-    let core_opts = ExtractOptions {
-        format,
-        overwrite: opts.overwrite,
-        cancel: token,
-        verify_sha256: opts.verify_sha256,
-        verify_content_sha256: opts.verify_content_sha256,
-    };
-
-    let mut throttle = ProgressThrottle::default();
-    let mut last_progress: Option<rcomp_core::Progress> = None;
-
-    let result = rcomp_core::extract(input, dest, &core_opts, |p| {
-        last_progress = Some(p.clone());
-        if throttle.should_forward(p, Instant::now()) {
-            sink(ProgressEvent::from(p));
-        }
-    });
-
+    let format = parse_format(opts.format.as_deref())?;
+    let core_opts = extract_options(opts, format, reg.register(job_id.to_string()));
+    let result = run_extract(input, dest, &core_opts, sink);
     reg.finish(job_id);
-
-    match result {
-        Ok(report) => {
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            sink(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+    result
 }
 
 /// Read a sidecar file for `input_path`.
@@ -468,6 +326,146 @@ pub fn do_wrap_info(input: &Path) -> Result<WrapInfo, IpcError> {
 // Private helpers
 // ---------------------------------------------------------------------------
 
+/// Build the engine for one operation.  Accelerator providers are only
+/// discovered when the job may use one, so CPU-only jobs skip GPU adapter
+/// enumeration entirely.
+fn operation_engine(preference: AccelerationPreference) -> Engine {
+    let providers = ProviderRegistry::new();
+    if preference == AccelerationPreference::Cpu {
+        return Engine::with_registry(providers);
+    }
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux", target_os = "macos"),
+        feature = "wgpu"
+    ))]
+    let providers = {
+        let mut providers = providers;
+        if let Ok(provider) = rcomp_wgpu::WgpuProvider::new() {
+            providers.register(std::sync::Arc::new(provider));
+        }
+        providers
+    };
+
+    #[cfg(all(target_os = "macos", feature = "metal"))]
+    let providers = {
+        let mut providers = providers;
+        if let Ok(provider) = rcomp_metal::MetalProvider::new() {
+            providers.register(std::sync::Arc::new(provider));
+        }
+        providers
+    };
+
+    Engine::with_registry(providers)
+}
+
+/// Parse the frontend's optional canonical format string.
+fn parse_format(format: Option<&str>) -> Result<Option<Format>, IpcError> {
+    format
+        .map(|s| {
+            Format::from_str(s).map_err(|_| {
+                IpcError::new("unknown-format", format!("unrecognised format string: {s}"))
+            })
+        })
+        .transpose()
+}
+
+fn compress_options(
+    opts: CompressOpts,
+    format: Option<Format>,
+    cancel: rcomp_core::CancelToken,
+) -> CompressOptions {
+    CompressOptions {
+        format,
+        level: opts.level.unwrap_or_default(),
+        overwrite: opts.overwrite,
+        cancel,
+        follow_gitignore: opts.gitignore,
+        exclude: opts.exclude,
+        checksum: opts.checksum,
+        acceleration: opts.acceleration,
+    }
+}
+
+fn extract_options(
+    opts: ExtractOpts,
+    format: Option<Format>,
+    cancel: rcomp_core::CancelToken,
+) -> ExtractOptions {
+    ExtractOptions {
+        format,
+        overwrite: opts.overwrite,
+        cancel,
+        verify_sha256: opts.verify_sha256,
+        verify_content_sha256: opts.verify_content_sha256,
+        acceleration: opts.acceleration,
+    }
+}
+
+fn run_compress(
+    input: &Path,
+    output: &Path,
+    opts: &CompressOptions,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    run_with_progress(sink, |on_progress| {
+        operation_engine(opts.acceleration).compress(input, output, opts, on_progress)
+    })
+}
+
+fn run_compress_many(
+    inputs: &[std::path::PathBuf],
+    output: &Path,
+    opts: &CompressOptions,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    run_with_progress(sink, |on_progress| {
+        operation_engine(opts.acceleration).compress_many(inputs, output, opts, on_progress)
+    })
+}
+
+fn run_extract(
+    input: &Path,
+    dest: &Path,
+    opts: &ExtractOptions,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    run_with_progress(sink, |on_progress| {
+        operation_engine(opts.acceleration).extract(input, dest, opts, on_progress)
+    })
+}
+
+/// Run one core operation, forwarding throttled progress to `sink` and, on
+/// success, an unconditional final event so the frontend always receives a
+/// terminal snapshot.
+fn run_with_progress(
+    sink: &mut dyn FnMut(ProgressEvent),
+    op: impl FnOnce(&mut dyn FnMut(&rcomp_core::Progress)) -> rcomp_core::Result<Report>,
+) -> Result<Report, IpcError> {
+    let mut throttle = ProgressThrottle::default();
+    let mut last_progress: Option<rcomp_core::Progress> = None;
+
+    let report = op(&mut |p| {
+        last_progress = Some(p.clone());
+        if throttle.should_forward(p, Instant::now()) {
+            sink(ProgressEvent::from(p));
+        }
+    })?;
+
+    let final_event = match last_progress {
+        Some(ref p) => ProgressEvent::from(p),
+        // No progress callbacks fired (e.g. empty input): synthesise a
+        // completion event from the report.
+        None => ProgressEvent {
+            bytes_done: report.input_bytes,
+            bytes_total: Some(report.input_bytes),
+            current_entry: None,
+        },
+    };
+    sink(final_event);
+    Ok(report)
+}
+
 /// Return the sidecar path for a given archive path: `<path>.sha256`.
 fn sidecar_path_for(path: &Path) -> std::path::PathBuf {
     let mut p = path.as_os_str().to_os_string();
@@ -478,17 +476,31 @@ fn sidecar_path_for(path: &Path) -> std::path::PathBuf {
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
+//
+// Synchronous `#[tauri::command] fn`s run on the main thread, so anything
+// that touches the filesystem — listing a `.tar.xz` decodes the whole stream —
+// is an `async` command that does its work in `spawn_blocking`.  Only
+// `cancel_job`, which just flips a flag, stays synchronous.
+
+/// Run blocking filesystem work off the main thread.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
+) -> Result<T, IpcError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| Err(IpcError::new("io", format!("task panicked: {e}"))))
+}
 
 /// Return filesystem metadata for `path`.
 #[tauri::command]
-pub fn inspect(path: String) -> Result<InspectResult, IpcError> {
-    do_inspect(Path::new(&path))
+pub async fn inspect(path: String) -> Result<InspectResult, IpcError> {
+    blocking(move || do_inspect(Path::new(&path))).await
 }
 
 /// List the entries of the archive at `path`.
 #[tauri::command]
-pub fn list_entries(path: String) -> Result<Vec<Entry>, IpcError> {
-    do_list_entries(Path::new(&path))
+pub async fn list_entries(path: String) -> Result<Vec<Entry>, IpcError> {
+    blocking(move || do_list_entries(Path::new(&path))).await
 }
 
 /// Cancel the in-flight job identified by `job_id`.
@@ -502,22 +514,25 @@ pub fn cancel_job(job_id: String, registry: tauri::State<'_, JobRegistry>) -> Re
 
 /// Read a sidecar file for the archive at `path`.
 #[tauri::command]
-pub fn read_sidecar(path: String) -> Result<SidecarData, IpcError> {
-    do_read_sidecar(Path::new(&path))
+pub async fn read_sidecar(path: String) -> Result<SidecarData, IpcError> {
+    blocking(move || do_read_sidecar(Path::new(&path))).await
 }
 
 /// Write a sidecar file for the archive at `output`.
 #[tauri::command]
-pub fn write_sidecar(
+pub async fn write_sidecar(
     output: String,
     artifact_sha256: String,
     content_sha256: Option<String>,
 ) -> Result<(), IpcError> {
-    do_write_sidecar(
-        Path::new(&output),
-        &artifact_sha256,
-        content_sha256.as_deref(),
-    )
+    blocking(move || {
+        do_write_sidecar(
+            Path::new(&output),
+            &artifact_sha256,
+            content_sha256.as_deref(),
+        )
+    })
+    .await
 }
 
 /// Return wrap-folder information for the archive at `path`.
@@ -526,8 +541,8 @@ pub fn write_sidecar(
 /// inside a wrap directory (when `roots >= 2`) and what to name it
 /// (`wrap_dir`).
 #[tauri::command]
-pub fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
-    do_wrap_info(Path::new(&path))
+pub async fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
+    blocking(move || do_wrap_info(Path::new(&path))).await
 }
 
 /// Compress `input` to `output`, streaming [`ProgressEvent`]s via `channel`.
@@ -545,8 +560,8 @@ pub fn wrap_info(path: String) -> Result<WrapInfo, IpcError> {
 /// 3. After the blocking task resolves, call `registry.finish` on the async
 ///    side (still has access to `registry`).
 ///
-/// `do_compress` is still the primary unit-test entry point (it receives the
-/// full `&JobRegistry` and manages its own `register`/`finish` cycle).
+/// The blocking body is the same `run_*` helper that [`do_compress`] uses, so
+/// unit tests exercise the production path (including accelerator selection).
 #[tauri::command]
 pub async fn compress(
     job_id: String,
@@ -556,81 +571,27 @@ pub async fn compress(
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
 ) -> Result<Report, IpcError> {
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
-    let token = registry.register(job_id.clone());
-
-    let core_opts = CompressOptions {
-        format,
-        level: opts.level.unwrap_or_default(),
-        overwrite: opts.overwrite,
-        cancel: token,
-        follow_gitignore: opts.gitignore,
-        exclude: opts.exclude,
-        checksum: opts.checksum,
-    };
-
-    let channel_clone = channel.clone();
+    let format = parse_format(opts.format.as_deref())?;
+    let core_opts = compress_options(opts, format, registry.register(job_id.clone()));
     let input_path = std::path::PathBuf::from(input);
     let output_path = std::path::PathBuf::from(output);
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut throttle = ProgressThrottle::default();
-        let mut last_progress: Option<rcomp_core::Progress> = None;
-
-        let res = rcomp_core::compress(&input_path, &output_path, &core_opts, |p| {
-            last_progress = Some(p.clone());
-            if throttle.should_forward(p, Instant::now()) {
-                let _ = channel_clone.send(ProgressEvent::from(p));
-            }
-        });
-
-        (res, last_progress)
+        run_compress(&input_path, &output_path, &core_opts, &mut |e| {
+            let _ = channel.send(e);
+        })
     })
     .await;
 
     registry.finish(&job_id);
-
-    // Unwrap the join handle result (propagates any panic as an IpcError).
-    let (core_result, last_progress) = match result {
-        Ok(pair) => pair,
-        Err(e) => return Err(IpcError::new("io", format!("task panicked: {e}"))),
-    };
-
-    match core_result {
-        Ok(report) => {
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            let _ = channel.send(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+    join_result(result)
 }
 
 /// Compress multiple `inputs` into a single archive at `output`, streaming
 /// [`ProgressEvent`]s via `channel`.
 ///
 /// Bundles every element of `inputs` into one archive (each input becomes a
-/// top-level root) via [`rcomp_core::compress_many`].  Uses the same
+/// top-level root) via [`Engine::compress_many`].  Uses the same
 /// State/spawn_blocking lifetime strategy as [`compress`].
 #[tauri::command]
 pub async fn compress_many(
@@ -641,74 +602,21 @@ pub async fn compress_many(
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
 ) -> Result<Report, IpcError> {
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
-    let token = registry.register(job_id.clone());
-
-    let core_opts = CompressOptions {
-        format,
-        level: opts.level.unwrap_or_default(),
-        overwrite: opts.overwrite,
-        cancel: token,
-        follow_gitignore: opts.gitignore,
-        exclude: opts.exclude,
-        checksum: opts.checksum,
-    };
-
-    let channel_clone = channel.clone();
+    let format = parse_format(opts.format.as_deref())?;
+    let core_opts = compress_options(opts, format, registry.register(job_id.clone()));
     let input_paths: Vec<std::path::PathBuf> =
         inputs.into_iter().map(std::path::PathBuf::from).collect();
     let output_path = std::path::PathBuf::from(output);
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut throttle = ProgressThrottle::default();
-        let mut last_progress: Option<rcomp_core::Progress> = None;
-
-        let res = rcomp_core::compress_many(&input_paths, &output_path, &core_opts, |p| {
-            last_progress = Some(p.clone());
-            if throttle.should_forward(p, Instant::now()) {
-                let _ = channel_clone.send(ProgressEvent::from(p));
-            }
-        });
-
-        (res, last_progress)
+        run_compress_many(&input_paths, &output_path, &core_opts, &mut |e| {
+            let _ = channel.send(e);
+        })
     })
     .await;
 
     registry.finish(&job_id);
-
-    let (core_result, last_progress) = match result {
-        Ok(pair) => pair,
-        Err(e) => return Err(IpcError::new("io", format!("task panicked: {e}"))),
-    };
-
-    match core_result {
-        Ok(report) => {
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            let _ = channel.send(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+    join_result(result)
 }
 
 /// Extract `input` into `dest`, streaming [`ProgressEvent`]s via `channel`.
@@ -723,71 +631,27 @@ pub async fn extract(
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
 ) -> Result<Report, IpcError> {
-    let format = match opts.format.as_deref() {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(_) => {
-                return Err(IpcError::new(
-                    "unknown-format",
-                    format!("unrecognised format string: {s}"),
-                ));
-            }
-        },
-        None => None,
-    };
-
-    let token = registry.register(job_id.clone());
-
-    let core_opts = ExtractOptions {
-        format,
-        overwrite: opts.overwrite,
-        cancel: token,
-        verify_sha256: opts.verify_sha256,
-        verify_content_sha256: opts.verify_content_sha256,
-    };
-
-    let channel_clone = channel.clone();
+    let format = parse_format(opts.format.as_deref())?;
+    let core_opts = extract_options(opts, format, registry.register(job_id.clone()));
     let input_path = std::path::PathBuf::from(input);
     let dest_path = std::path::PathBuf::from(dest);
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut throttle = ProgressThrottle::default();
-        let mut last_progress: Option<rcomp_core::Progress> = None;
-
-        let res = rcomp_core::extract(&input_path, &dest_path, &core_opts, |p| {
-            last_progress = Some(p.clone());
-            if throttle.should_forward(p, Instant::now()) {
-                let _ = channel_clone.send(ProgressEvent::from(p));
-            }
-        });
-
-        (res, last_progress)
+        run_extract(&input_path, &dest_path, &core_opts, &mut |e| {
+            let _ = channel.send(e);
+        })
     })
     .await;
 
     registry.finish(&job_id);
+    join_result(result)
+}
 
-    let (core_result, last_progress) = match result {
-        Ok(pair) => pair,
-        Err(e) => return Err(IpcError::new("io", format!("task panicked: {e}"))),
-    };
-
-    match core_result {
-        Ok(report) => {
-            let final_event = if let Some(ref p) = last_progress {
-                ProgressEvent::from(p)
-            } else {
-                ProgressEvent {
-                    bytes_done: report.input_bytes,
-                    bytes_total: Some(report.input_bytes),
-                    current_entry: None,
-                }
-            };
-            let _ = channel.send(final_event);
-            Ok(report)
-        }
-        Err(e) => Err(e.into()),
-    }
+/// Unwrap a `spawn_blocking` join result, surfacing a panic as an `IpcError`.
+fn join_result<E: std::fmt::Display>(
+    result: Result<Result<Report, IpcError>, E>,
+) -> Result<Report, IpcError> {
+    result.unwrap_or_else(|e| Err(IpcError::new("io", format!("task panicked: {e}"))))
 }
 
 // ---------------------------------------------------------------------------
@@ -812,6 +676,39 @@ mod tests {
     // ------------------------------------------------------------------
     // Test: do_compress_many bundles multiple inputs into one archive
     // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Test: the shared run path honours the acceleration preference
+    // ------------------------------------------------------------------
+    // The Tauri `compress` command runs `run_compress`, the same helper this
+    // test drives.  Without a GPU feature there is no provider, so "Require
+    // GPU" must fail instead of silently compressing on the CPU.
+    #[cfg(not(any(feature = "wgpu", feature = "metal")))]
+    #[test]
+    fn required_acceleration_fails_without_a_provider() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = write_small_file(dir.path(), "a.txt", b"alpha");
+        let output = dir.path().join("a.txt.lz4");
+        let opts = CompressOpts {
+            format: Some("lz4".into()),
+            level: Some(Level::Fast),
+            overwrite: false,
+            gitignore: false,
+            exclude: vec![],
+            checksum: false,
+            acceleration: AccelerationPreference::Required,
+        };
+        let core_opts = compress_options(
+            opts,
+            Some(Format::codec(rcomp_core::Codec::Lz4)),
+            Default::default(),
+        );
+
+        let err = run_compress(&input, &output, &core_opts, &mut |_| {})
+            .expect_err("required acceleration must not fall back to CPU");
+        assert_eq!(err.kind, "acceleration-unavailable");
+        assert!(!output.exists(), "no output on failure");
+    }
+
     #[test]
     fn compress_many_bundles_inputs() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -830,6 +727,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let report = do_compress_many(&reg, "j-many", &[a, b], &output, opts, &mut sink)
             .expect("compress_many should succeed");
@@ -862,6 +760,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let err = do_compress_many(&reg, "j-dup", &[a, b], &output, opts, &mut sink)
             .expect_err("duplicate basenames must error");
@@ -889,6 +788,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r1 = do_compress(&reg, "j-ow-1", &input, &output, opts1, &mut sink);
         assert!(r1.is_ok(), "first compress should succeed: {:?}", r1);
@@ -901,6 +801,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r2 = do_compress(&reg, "j-ow-2", &input, &output, opts2, &mut sink);
         let err = r2.expect_err("second compress with overwrite:false must fail");
@@ -917,6 +818,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let r3 = do_compress(&reg, "j-ow-3", &input, &output, opts3, &mut sink);
         assert!(
@@ -997,6 +899,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         let report = do_compress(&reg, "j-prog", &input, &output, opts, &mut sink)
             .expect("compress should succeed");
@@ -1068,6 +971,7 @@ mod tests {
                 gitignore: false,
                 exclude: vec![],
                 checksum: false,
+                acceleration: AccelerationPreference::Cpu,
             };
             do_compress(
                 &reg_thread,
@@ -1159,6 +1063,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-inspect", &input, &output, opts, &mut sink)
             .expect("compress for inspect test");
@@ -1201,6 +1106,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-wrap-multi", &src, &archive, opts, &mut sink)
             .expect("compress for wrap_info multi-root test");
@@ -1235,6 +1141,7 @@ mod tests {
             gitignore: false,
             exclude: vec![],
             checksum: false,
+            acceleration: AccelerationPreference::Cpu,
         };
         do_compress(&reg, "j-wrap-bare", &input, &archive, opts, &mut sink)
             .expect("compress for wrap_info bare test");

@@ -5,7 +5,7 @@
 
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::Shell;
-use rcomp_core::{Format, Level};
+use rcomp_core::{AccelerationPreference, AcceleratorTarget, Format, Level};
 
 /// Unified compression and archive tool.
 ///
@@ -56,6 +56,29 @@ pub struct Cli {
     /// Use maximum compression (highest ratio, hardware expensive).
     #[arg(long, group = "level_group")]
     pub edge: bool,
+
+    /// Hardware acceleration mode: auto, cpu, or required.
+    ///
+    /// The command-line value overrides RCOMP_ACCELERATOR. `auto` falls back
+    /// to CPU with a warning; `required` fails if no compatible device exists.
+    #[arg(
+        long,
+        env = "RCOMP_ACCELERATOR",
+        default_value = "cpu",
+        value_name = "MODE"
+    )]
+    pub accelerator: AccelerationPreference,
+
+    /// Restrict GPU use to one device from `rcomp hardware`.
+    ///
+    /// The value has the form `PROVIDER:DEVICE-ID`. Use it with
+    /// `--accelerator required` for deterministic qualification runs.
+    #[arg(
+        long,
+        env = "RCOMP_ACCELERATOR_DEVICE",
+        value_name = "PROVIDER:DEVICE-ID"
+    )]
+    pub accelerator_device: Option<AcceleratorTarget>,
 
     /// Force compress mode (overrides inference).
     #[arg(short = 'c', long, conflicts_with = "extract")]
@@ -135,6 +158,9 @@ impl Cli {
 /// Subcommands coexisting with the default positional invocation.
 #[derive(Debug, Subcommand)]
 pub enum SubCommand {
+    /// Discover compiled hardware providers, devices, and capabilities.
+    Hardware,
+
     /// List entries inside an archive without extracting.
     ///
     /// Prints one line per entry in the format `{size:>12}  {path}`.
@@ -160,8 +186,10 @@ pub enum SubCommand {
     Man,
 }
 
-/// Value parser for `--algo`: calls [`Format::from_str`] and maps a
+/// Value parser for `--algo`: parses a [`Format`] through [`FromStr`] and maps a
 /// core `Error` to a `String` so clap can produce a usage error (exit 2).
+///
+/// [`FromStr`]: std::str::FromStr
 fn parse_format(s: &str) -> Result<Format, String> {
     s.parse::<Format>().map_err(|e| e.to_string())
 }
@@ -221,6 +249,25 @@ mod tests {
     fn ls_subcommand_parses() {
         let cli = parse(&["ls", "archive.zip"]);
         assert!(matches!(cli.command, Some(SubCommand::Ls { .. })));
+    }
+
+    #[test]
+    fn hardware_subcommand_parses() {
+        let cli = parse(&["hardware"]);
+        assert!(matches!(cli.command, Some(SubCommand::Hardware)));
+    }
+
+    #[test]
+    fn accelerator_device_preserves_colons_in_device_id() {
+        let cli = parse(&[
+            "in",
+            "out.lz4",
+            "--accelerator-device",
+            "wgpu:metal:106b:0001:0",
+        ]);
+        let target = cli.accelerator_device.unwrap();
+        assert_eq!(target.provider_id, "wgpu");
+        assert_eq!(target.device_id, "metal:106b:0001:0");
     }
 
     #[test]

@@ -93,6 +93,8 @@ jobs:
         run: bun run build
       - name: Build Tauri crate
         run: cargo build -p rcomp-desktop --locked
+      - name: Check Tauri portable-GPU feature
+        run: cargo check -p rcomp-desktop --features wgpu --locked
 
   no-default-features:
     name: No-default-features
@@ -103,6 +105,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --no-default-features -p rcomp --locked
       - run: cargo test --no-default-features -p rcomp-core --locked
+
+  package:
+    name: Package (crates.io)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Same check the release workflow runs before publishing: every
+      # published crate must package and build against the others.
+      - run: cargo package -p rcomp-core -p rcomp-wgpu -p rcomp-metal -p rcomp --locked
 
   bundle:
     name: Bundle (${{ matrix.os }})

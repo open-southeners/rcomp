@@ -33,6 +33,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod acceleration;
 mod archive;
 pub mod codec;
 pub mod detect;
@@ -45,12 +46,18 @@ pub mod progress;
 pub mod sidecar;
 pub(crate) mod walk;
 
+pub use acceleration::{
+    AccelerationFallbackReason, AccelerationPreference, AccelerationRequest, AcceleratorCapability,
+    AcceleratorDevice, AcceleratorDeviceProperty, AcceleratorProvider, AcceleratorTarget,
+    BlockEncoderSession, CapabilityMaturity, CompressedBlock, Direction, ProcessingBackend,
+    ProviderDescriptor, ProviderRegistry,
+};
 pub use codec::{Encoder, new_decoder, new_encoder};
 pub use detect::{detect, detect_from_bytes, detect_from_extension, split_format_suffix};
 pub use error::{Error, Result};
 pub use format::{Codec, Container, Format};
 pub use level::Level;
-pub use ops::{CompressOptions, ExtractOptions, compress, compress_many, extract, list};
+pub use ops::{CompressOptions, Engine, ExtractOptions, compress, compress_many, extract, list};
 pub use progress::{CancelToken, Entry, Progress, Report};
 pub use sidecar::{
     SidecarError, distinct_roots, format_sidecar, is_sha256_hex, parse_sidecar, wrap_dir_name,

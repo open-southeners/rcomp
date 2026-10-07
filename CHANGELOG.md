@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added shared hardware-acceleration selection for the core, CLI, and desktop
+  app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop
+  users can choose Automatic, CPU only, or Require GPU in Settings. Automatic
+  mode reports CPU fallback, while required mode fails clearly when no
+  compatible provider is available.
+- Added an opt-in `rcomp-metal` provider and safe core provider registry. The
+  first experimental capability produces interoperable LZ4 Fast and tar.lz4
+  frames on Apple Silicon when the CLI or Tauri backend is built with
+  `--features metal` and GPU use is explicitly required. Reusable buffers and
+  device-aware bounded batches, a two-batch overlap pipeline, cached native
+  state, and payload-only host copies substantially reduce dispatch overhead.
+  It remains excluded from automatic selection until crossover measurements
+  exist across representative Apple Silicon devices.
+- Added the first opt-in `rcomp-wgpu` provider slice, using a single baseline
+  WGSL LZ4 kernel through Direct3D 12 on Windows, Vulkan on Linux, and Metal on
+  Apple Silicon. It discovers and ranks compatible adapters, derives bounded
+  batches from reported limits, reuses GPU buffers and pipeline state, and
+  integrates with the existing core LZ4 framing, cancellation, and atomic
+  publication path. The capability remains experimental and requires explicit
+  `--accelerator required` selection while Intel, NVIDIA, AMD, and Apple
+  hardware qualification is completed.
+- Added `rcomp hardware` provider/device inventory and exact selection through
+  `--accelerator-device PROVIDER:DEVICE-ID` or `RCOMP_ACCELERATOR_DEVICE`.
+  Provider diagnostics include backend, driver, buffer limits, batch policy,
+  and exact capabilities where available.
+- The `rcomp-wgpu` and `rcomp-metal` provider crates are now published to
+  crates.io alongside `rcomp-core`, so `cargo install rcomp --features wgpu`
+  (or `metal` on macOS) builds the GPU-capable CLI.
+- Added stable structured acceleration fallback reasons alongside the existing
+  human-readable report notice, covering missing providers/devices,
+  unsupported operations, experimental capabilities, explicit selectors, and
+  provider discovery or initialization failures.
+- Expanded the deterministic accelerator harness with malformed block-count,
+  invalid input-length, worker-panic, queued cancellation, active
+  cancellation, and atomic cleanup coverage.
+- Qualified the portable WGSL path on an Apple M3 Max, including block
+  boundaries, incompressible input, a 256 MiB batch boundary, complete LZ4
+  frame round trips, and payload-only readback. The provider remains
+  experimental because the portable Metal path is still slower than CPU and
+  native Metal on the fixed 573 MiB corpus.
+- Qualified the portable GPU path on Windows (Direct3D 12) with an NVIDIA
+  GeForce RTX 3090 and an AMD Radeon integrated GPU. Output decodes with the
+  reference `lz4` tool and is byte-identical across both vendors. Cancellation
+  and failed runs never publish partial output. The path remains experimental
+  and opt-in because it is still slower than CPU LZ4 on this hardware.
+
+### Changed
+
+- Accelerated compression now writes to a synchronized temporary sibling and
+  atomically publishes the completed artifact. Cancellation or provider
+  failure removes staging data while preserving any existing destination.
+- Automatic file compression now retries once on CPU when a selected supported
+  accelerator fails during execution. The retry occurs before atomic
+  publication, is reported structurally and in display text, and is never
+  applied to `required`, cancellation, or unrelated codec/I/O failures.
+- Native Metal session creation and each worker dispatch now run inside an
+  explicit Objective-C autorelease pool; the complete native Metal hardware
+  suite passes on the M3 Max with that lifecycle policy.
+
+### Fixed
+
+- Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from
+  `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of
+  silently stopping after the first stream.
+- Extracting with overwrite enabled now replaces existing symlinks and hard
+  links in the destination instead of failing with "already exists".
+- Desktop app: ticking "checksum" when compressing now writes the `.sha256`
+  file next to the archive (it was silently skipped), and a failure to write
+  it is now reported instead of ignored.
+- Tarballs with a leading `./` entry (as written by `tar -C dir -cf x.tar .`)
+  now extract instead of failing, and get a wrap folder like any other
+  multi-root archive.
+- Checksum files with uppercase digests (as written by PowerShell
+  `Get-FileHash` or `certutil`) now verify instead of reporting a mismatch.
+- A failed or cancelled compress no longer truncates or deletes the existing
+  output when overwriting, and never leaves a partial archive behind;
+  single-file extraction (e.g. `.gz` to a file) likewise keeps the existing
+  file intact and leaves nothing behind on error.
+- The CLI progress line no longer crashes on long entry names containing
+  non-ASCII characters.
+- Desktop app: opening or inspecting a large archive no longer freezes the
+  window.
+- Pressing Ctrl-C (or cancelling in the desktop app) while a large file was
+  being added to a `.tar.*` archive or a compressed folder no longer hangs at
+  full CPU. The operation now stops promptly and leaves no partial output.
+
+### Security
+
+- Extraction no longer writes through symlinks: an archive can't chain its own
+  symlinks, or reuse ones already in the destination, to place files outside
+  the extraction folder. Such archives are rejected with a path-traversal
+  error, and an existing symlink at an output path is treated as existing (or
+  replaced with overwrite enabled) rather than followed.
+- Extracted files and directories no longer keep setuid, setgid, or sticky
+  bits from the archive; only the regular read/write/execute permissions are
+  restored.
+- The desktop app now enforces a strict Content Security Policy, so content
+  shown in the window can't load remote resources or run injected scripts.
+
 ## [0.3.3] - 2026-09-11
 
 ### Changed

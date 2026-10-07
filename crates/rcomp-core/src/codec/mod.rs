@@ -19,6 +19,7 @@ pub(crate) mod brotli;
 pub(crate) mod bzip2;
 pub(crate) mod gzip;
 pub(crate) mod lz4;
+pub(crate) mod lz4_accelerated;
 pub(crate) mod xz;
 pub(crate) mod zstd;
 
@@ -217,6 +218,38 @@ pub(crate) mod test_util {
                 "[{label}] roundtrip produced different bytes for codec {codec}"
             );
         }
+    }
+
+    /// Concatenated-stream test: compress two payloads as two independent
+    /// streams, append the second to the first, and assert the decoder yields
+    /// both payloads back to back (as `cat a.gz b.gz | gzip -d` would).
+    ///
+    /// Guards against decoders that silently stop after the first stream.
+    pub(crate) fn concatenated(codec: Codec) {
+        let parts: [&[u8]; 2] = [b"first stream\n", b"second stream\n"];
+        let mut compressed = Vec::new();
+        for part in parts {
+            let writer: Box<dyn Write> = Box::new(&mut compressed);
+            let mut enc = new_encoder(codec, writer, Level::Fast)
+                .unwrap_or_else(|e| panic!("new_encoder({codec}, Fast) failed: {e}"));
+            enc.write_all(part)
+                .unwrap_or_else(|e| panic!("write_all failed: {e}"));
+            Box::new(enc)
+                .finish()
+                .unwrap_or_else(|e| panic!("finish() failed: {e}"));
+        }
+
+        let reader: Box<dyn Read> = Box::new(compressed.as_slice());
+        let mut dec = new_decoder(codec, reader)
+            .unwrap_or_else(|e| panic!("new_decoder({codec}) failed: {e}"));
+        let mut out = Vec::new();
+        dec.read_to_end(&mut out)
+            .unwrap_or_else(|e| panic!("read_to_end failed: {e}"));
+        assert_eq!(
+            out,
+            parts.concat(),
+            "{codec} decoder must decode every concatenated stream"
+        );
     }
 
     /// Corruption test: compress `b"hello world"` at [`Level::Best`], flip a

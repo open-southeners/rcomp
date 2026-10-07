@@ -20,11 +20,13 @@
     WrapInfo,
     SidecarData,
   } from "../types";
+  import type { AccelerationPreference } from "../preferences";
 
   interface Props {
     inputPath: string;
     inspect: InspectResult;
     entries: Entry[];
+    acceleration: AccelerationPreference;
     onRunning: (jobId: string) => void;
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string, verified: boolean) => void;
@@ -34,7 +36,7 @@
     onIdle: () => void;
   }
 
-  let { inputPath, inspect, entries, onRunning, onProgress, onDone, onError, onIdle }: Props =
+  let { inputPath, inspect, entries, acceleration, onRunning, onProgress, onDone, onError, onIdle }: Props =
     $props();
 
   let wrapData = $state<WrapInfo | null>(null);
@@ -122,6 +124,7 @@
       overwrite: forceOverwrite,
       verify_sha256: hasSidecar ? (sidecar?.artifact_sha256 ?? null) : null,
       verify_content_sha256: hasSidecar ? (sidecar?.content_sha256 ?? null) : null,
+      acceleration,
     };
 
     try {

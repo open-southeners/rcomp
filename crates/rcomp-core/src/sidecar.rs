@@ -140,12 +140,14 @@ pub fn format_sidecar(artifact_hex: &str, content_hex: Option<&str>, file_name: 
 /// # Returns
 ///
 /// `Ok((verify_sha256, verify_content_sha256))` where each field is `Some` when
-/// the corresponding digest was present and valid.
+/// the corresponding digest was present and valid.  Digests are returned in
+/// lowercase, whatever case the sidecar used (PowerShell `Get-FileHash` and
+/// `certutil` write uppercase).
 ///
 /// # Errors
 ///
 /// - [`SidecarError::MalformedContentDigest`] — the `# content-sha256:` comment
-///   is present but its hex value is not exactly 64 lowercase hex characters.
+///   is present but its hex value is not exactly 64 hex characters.
 /// - [`SidecarError::MalformedArtifactDigest`] — an artifact line for
 ///   `input_name` is present but its hex value is malformed.
 /// - [`SidecarError::NoMatchingEntry`] — no artifact line matches `input_name`.
@@ -164,7 +166,7 @@ pub fn parse_sidecar(
 
         // Comment line: `# content-sha256: <hex>`
         if let Some(rest) = line.strip_prefix("# content-sha256:") {
-            let hex = rest.trim().to_owned();
+            let hex = rest.trim().to_ascii_lowercase();
             if !is_sha256_hex(&hex) {
                 return Err(SidecarError::MalformedContentDigest {
                     line: line.to_owned(),
@@ -205,7 +207,7 @@ pub fn parse_sidecar(
                 file_name: input_name.to_owned(),
             });
         }
-        artifact_hex = Some(hex_part.to_owned());
+        artifact_hex = Some(hex_part.to_ascii_lowercase());
     }
 
     match artifact_hex {
@@ -268,13 +270,14 @@ pub fn distinct_roots(entries: &[crate::Entry]) -> usize {
     use std::collections::HashSet;
     let mut roots: HashSet<&str> = HashSet::new();
     for entry in entries {
-        if let Some(first) = entry.path.components().next() {
-            use std::path::Component;
-            if let Component::Normal(name) = first
-                && let Some(s) = name.to_str()
-            {
-                roots.insert(s);
-            }
+        use std::path::Component;
+        // Skip a leading `./` (as written by `tar -C dir .`) so `./a` and `a`
+        // share the root `a`; a bare `./` entry contributes no root.
+        let first = entry.path.components().find(|c| *c != Component::CurDir);
+        if let Some(Component::Normal(name)) = first
+            && let Some(s) = name.to_str()
+        {
+            roots.insert(s);
         }
     }
     roots.len()
@@ -424,6 +427,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_lowercases_uppercase_digests() {
+        // PowerShell `Get-FileHash` and `certutil` write uppercase hex.
+        let ahex = "AB".repeat(32);
+        let chex = "CD".repeat(32);
+        let text = format!("# content-sha256: {chex}\n{ahex}  archive.tar.gz\n");
+        let (artifact, content) = parse_sidecar(&text, "archive.tar.gz").unwrap();
+        assert_eq!(artifact, Some("ab".repeat(32)));
+        assert_eq!(content, Some("cd".repeat(32)));
+    }
+
+    #[test]
     fn parse_roundtrip_with_content() {
         let ahex = "a".repeat(64);
         let chex = "b".repeat(64);
@@ -550,6 +564,13 @@ mod tests {
     #[test]
     fn distinct_roots_empty() {
         assert_eq!(distinct_roots(&[]), 0);
+    }
+
+    #[test]
+    fn distinct_roots_dot_prefixed() {
+        // `tar -C dir -czf x.tgz .` writes `./`, `./a/...`, `./b`.
+        let entries = vec![entry("./"), entry("./a/x.txt"), entry("./b"), entry("a/y")];
+        assert_eq!(distinct_roots(&entries), 2);
     }
 
     #[test]

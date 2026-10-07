@@ -34,15 +34,18 @@
 //! callbacks emitted during RAR extraction (consistent with zip and 7z).
 
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
 use unrar::Archive;
 
-use crate::{Error, Result, progress::Entry};
+use crate::{Result, progress::Entry};
 
-use super::{OpCtx, sanitize::sanitize_entry_path};
+use super::{
+    OpCtx,
+    sanitize::{is_root_entry, prepare_dir, prepare_leaf, sanitize_entry_path},
+};
 
 // ---------------------------------------------------------------------------
 // extract
@@ -115,6 +118,11 @@ pub(crate) fn extract(
         let unpacked_size: u64 = header.entry().unpacked_size;
         let is_directory: bool = header.entry().is_directory();
 
+        if is_directory && is_root_entry(&raw_filename) {
+            open = header.skip().map_err(|e| io::Error::other(e.to_string()))?;
+            continue;
+        }
+
         // Sanitize the raw path first.
         let out_path = sanitize_entry_path(dest, &raw_filename)?;
 
@@ -126,20 +134,16 @@ pub(crate) fn extract(
             // Skip the payload (no bytes to extract for a directory entry).
             // create_dir_all is called after skip so the archive stays in sync.
             open = header.skip().map_err(|e| io::Error::other(e.to_string()))?;
-            fs::create_dir_all(&out_path)?;
+            prepare_dir(dest, &out_path)?;
         } else {
-            // Ensure parent directory exists before writing.
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            // Overwrite check.
-            if !overwrite && out_path.exists() {
+            // Create parent directories and handle an existing entry, never
+            // writing through a symlink.
+            if let Err(e) = prepare_leaf(dest, &out_path, overwrite) {
                 // Skip the payload to keep the archive in a valid state, then
                 // return the error.  (We need to skip before returning because
                 // the unrar handle must be driven to completion or dropped.)
                 let _ = header.skip();
-                return Err(Error::AlreadyExists { path: out_path });
+                return Err(e);
             }
 
             // Extract using our sanitized path — unrar will not infer the

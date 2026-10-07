@@ -184,8 +184,74 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   `finish(self: Box<Self>) -> Result<Box<dyn Write>>` in a minor refactor;
   don't pre-build it now.
 
+- **Where:** `crates/rcomp-wgpu/src/shaders/lz4.wgsl` (one invocation per
+  64 KiB block)
+  **What:** The portable kernel under-occupies large discrete GPUs. A 64 MiB
+  batch is 1,024 invocations (16 workgroups) on an 82-SM RTX 3090.
+  `nvidia-smi dmon` shows 80–100% SM time but only about 150 W of 390 W and
+  1–2% memory-controller use. On the 3090 the warm GPU path is about 3x slower
+  than CPU on incompressible data (0.664 s vs 0.213 s for 128 MiB) and 2x slower
+  on a realistic 1 GiB tar (3.49 s vs 1.76 s). Output is about 7.6% larger than
+  CPU LZ4 on the tar. This is evidence, not a correctness defect.
+  **Fix:** Design work, out of scope for qualification: more parallelism per
+  block (for example cooperative match search within a workgroup) or more,
+  smaller independent blocks. Keep one shared WGSL kernel.
+
+- **Where:** `crates/rcomp-wgpu` (host staging), CLI memory footprint
+  **What:** GPU compression peaks at about 700 MiB working set on the RTX 3090
+  and about 1 GiB on the Radeon iGPU (shared memory), versus 139 MiB for CPU
+  LZ4, for the same 1 GiB input. The cause is two in-flight 64 MiB batches plus
+  the padded host copy, the upload staging for `write_buffer`, and the mapped
+  readback buffers. This matters for the desktop app's memory budget.
+  **Fix:** Reuse the padded input allocation and write directly from the
+  pending batch when it is already 4-byte aligned. Consider a mapped upload
+  ring instead of `queue.write_buffer`. Record the budget in the README.
+
+- **Where:** `crates/rcomp-core/src/acceleration.rs:597` (and the explicit
+  device message at :539)
+  **What:** `--accelerator required` failures end with "...; using the CPU is
+  the only supported path on this system". The operation actually fails and
+  does **not** fall back, so the wording suggests a fallback that didn't
+  happen. With an explicit `--accelerator-device`, `--best` fails with the
+  generic "unavailable or incompatible" message and does not say that only
+  `Fast` is supported.
+  **Fix:** Use different wording for required-mode errors (for example "GPU
+  encoding requires --fast on this device") and keep "using CPU" for `auto`
+  notices only.
+
+- **Where:** `.github/workflows/ci.yml` (`clippy` job runs on Linux only), CLI
+  cancel test (`crates/rcomp/tests/cancel.rs` is `#![cfg(unix)]` and uses
+  codec-only `.bz2`)
+  **What:** Windows-only lint failures went unnoticed in `rcomp-core` (unused
+  unix-only imports), in the CLI checksum tests (fixed during Windows
+  qualification) and in `rcomp-metal`, where
+  `cargo clippy --workspace --all-targets --all-features --exclude rcomp-desktop`
+  still fails on Windows (`provider.rs`: unused `CompressedBlock` and
+  `MetalError` imports on non-Apple targets; not fixed, out of scope). The
+  tar cancellation hang (now fixed) was also never exercised: the only CLI
+  cancel test is unix-only and tar-free.
+  **Fix:** Add `windows-latest` to the clippy job (or a Windows clippy step to
+  the `test` matrix leg), and gate the `rcomp-metal` imports behind the same
+  `cfg` as their users. Consider a Windows CLI cancel test that sends a real
+  `CTRL_C_EVENT` from a helper process on a private console.
+
 
 ## Resolved
+
+- **Where:** `crates/rcomp-wgpu/src/provider.rs` (one dispatch per batch)
+  **Outcome:** Resolved. Each 64 MiB batch was a single compute dispatch. On
+  the Ryzen 7 7800X3D's Radeon iGPU, an incompressible batch took 1.36 s of
+  GPU time, about 70% of the 2 s Windows TDR timeout. Batches are now
+  compressed in submissions sized by a per-device 500 ms time budget
+  (`SubmissionBudget`). They start at 8 MiB, double while 2x the last time
+  fits, and halve on an overrun. The worst submission is now 282 ms
+  (random input) or 441 ms (realistic tar) on the iGPU, and 222 ms on an
+  RTX 3090, which still runs whole batches. A fixed split was rejected
+  because it made the RTX 3090 3x slower on realistic data. Unit tests drive
+  the controller with the measured narrow and wide device behaviour.
+  Remaining cost: about 0.5 s of ramp-up per process on wide GPUs, and the
+  iGPU tar is 15% slower (10.9 s → 12.5 s). If the ramp-up matters, persist
+  the learned size per device or start larger once a device is known.
 
 - **Where:** `crates/rcomp-core/src/ops.rs` — `extract()`'s `output_bytes`.
   **Outcome:** Resolved — `output_bytes` was computed by recursively summing

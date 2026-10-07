@@ -15,8 +15,9 @@ use std::{
 use anyhow::{Context, bail};
 use indicatif::HumanBytes;
 use rcomp_core::{
-    CancelToken, CompressOptions, Error as CoreError, ExtractOptions, Format, Report, compress,
-    detect, distinct_roots, extract, format_sidecar, list, split_format_suffix, wrap_dir_name,
+    AcceleratorTarget, CancelToken, CompressOptions, Engine, Error as CoreError, ExtractOptions,
+    Format, ProviderRegistry, Report, detect, distinct_roots, format_sidecar, list,
+    split_format_suffix, wrap_dir_name,
 };
 
 use crate::cli::{Cli, SubCommand};
@@ -57,12 +58,13 @@ impl std::error::Error for UsageError {}
 /// through [`CoreError::Cancelled`] (cleaning up partial output).
 ///
 /// Returns `Ok(())` on success or an `anyhow::Error` whose root cause may be
-/// [`CoreError`] or [`AmbiguityError`].  `main.rs` maps the error to the
+/// [`CoreError`] or an inference ambiguity. `main.rs` maps the error to the
 /// appropriate exit code.
 pub fn run(cli: &Cli, cancel: CancelToken) -> anyhow::Result<()> {
     // Subcommands bypass the inference path entirely.
     match &cli.command {
         Some(SubCommand::Ls { archive }) => return cmd_ls(Path::new(archive), cli.quiet),
+        Some(SubCommand::Hardware) => return cmd_hardware(),
         Some(SubCommand::Completions { shell }) => return cmd_completions(*shell),
         Some(SubCommand::Man) => return cmd_man(),
         None => {}
@@ -177,12 +179,15 @@ fn cmd_compress(
         overwrite: cli.force,
         cancel,
         checksum: cli.checksum,
+        acceleration: cli.accelerator,
         follow_gitignore: !cli.all,
         exclude: cli.exclude.clone(),
     };
 
     let mut prog = ui::build(cli.quiet);
-    let result = compress(input, output, &opts, |p| (prog.callback)(p));
+    let result =
+        operation_engine(cli.accelerator_device.as_ref())
+            .compress(input, output, &opts, |p| (prog.callback)(p));
 
     // On cancellation: abandon the bar so the terminal is not left corrupted,
     // then print a dedicated "cancelled" line to stderr and exit 1.
@@ -205,6 +210,7 @@ fn cmd_compress(
 
     let report = result.map_err(|e| map_core_error(e, "compress"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
+    print_acceleration_notice(&report, cli.quiet);
 
     // Write the sidecar when --checksum was requested.
     if let Some(ref artifact_hex) = report.sha256 {
@@ -356,10 +362,16 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
         cancel,
         verify_sha256,
         verify_content_sha256,
+        acceleration: cli.accelerator,
     };
 
     let mut prog = ui::build(cli.quiet);
-    let result = extract(input, &effective_dest, &opts, |p| (prog.callback)(p));
+    let result = operation_engine(cli.accelerator_device.as_ref()).extract(
+        input,
+        &effective_dest,
+        &opts,
+        |p| (prog.callback)(p),
+    );
 
     // On cancellation: abandon the bar so the terminal is not left corrupted,
     // then print a dedicated "cancelled" line to stderr and exit 1.
@@ -383,6 +395,7 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
 
     let report = result.map_err(|e| map_core_error(e, "extract"))?;
     drop(prog.guard); // finish_and_clear the bar before printing summary
+    print_acceleration_notice(&report, cli.quiet);
 
     // Print verification note to stderr when a sidecar was used (not under -q).
     if has_sidecar && !cli.quiet {
@@ -432,6 +445,117 @@ fn cmd_ls(archive: &Path, quiet: bool) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+struct ProviderSetup {
+    registry: ProviderRegistry,
+    failures: Vec<(&'static str, String)>,
+}
+
+fn discover_providers() -> ProviderSetup {
+    #[allow(unused_mut)]
+    let mut registry = ProviderRegistry::new();
+    #[allow(unused_mut)]
+    let mut failures = Vec::new();
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux", target_os = "macos"),
+        feature = "wgpu"
+    ))]
+    match rcomp_wgpu::WgpuProvider::new() {
+        Ok(provider) => registry.register(std::sync::Arc::new(provider)),
+        Err(error) => {
+            failures.push(("wgpu", error.to_string()));
+        }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "metal"))]
+    match rcomp_metal::MetalProvider::new() {
+        Ok(provider) => registry.register(std::sync::Arc::new(provider)),
+        Err(error) => {
+            failures.push(("metal", error.to_string()));
+        }
+    }
+
+    ProviderSetup { registry, failures }
+}
+
+fn operation_engine(target: Option<&AcceleratorTarget>) -> Engine {
+    let engine = Engine::with_registry(discover_providers().registry);
+    match target {
+        Some(target) => engine.with_accelerator_target(target.clone()),
+        None => engine,
+    }
+}
+
+fn cmd_hardware() -> anyhow::Result<()> {
+    let setup = discover_providers();
+    let mut found_device = false;
+    let had_failures = !setup.failures.is_empty();
+
+    for provider in setup.registry.providers() {
+        let descriptor = provider.descriptor();
+        println!("provider {} — {}", descriptor.id, descriptor.name);
+        match provider.devices() {
+            Ok(devices) if devices.is_empty() => println!("  no compatible devices"),
+            Ok(devices) => {
+                for device in devices {
+                    found_device = true;
+                    println!("  device {}:{}", descriptor.id, device.device_id);
+                    println!("    name: {}", device.name);
+                    match provider.device_properties(&device) {
+                        Ok(properties) => {
+                            for property in properties {
+                                println!("    {}: {}", property.key, property.value);
+                            }
+                        }
+                        Err(error) => println!("    property error: {error}"),
+                    }
+                    match provider.capabilities(&device) {
+                        Ok(capabilities) if capabilities.is_empty() => {
+                            println!("    capabilities: none");
+                        }
+                        Ok(capabilities) => {
+                            for capability in capabilities {
+                                let levels = capability
+                                    .levels
+                                    .iter()
+                                    .map(|level| format!("{level:?}").to_ascii_lowercase())
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                println!(
+                                    "    capability: {} {} levels={} block={} maturity={:?}",
+                                    capability.format,
+                                    capability.direction,
+                                    levels,
+                                    capability.block_size,
+                                    capability.maturity,
+                                );
+                            }
+                        }
+                        Err(error) => println!("    capability error: {error}"),
+                    }
+                }
+            }
+            Err(error) => println!("  discovery error: {error}"),
+        }
+    }
+
+    for (provider, reason) in setup.failures {
+        println!("provider {provider} — unavailable");
+        println!("  error: {reason}");
+    }
+
+    if setup.registry.providers().is_empty() && !found_device {
+        println!("no hardware provider is available in this build or environment");
+        if had_failures {
+            println!("check the provider errors above and the native GPU driver/runtime");
+        } else {
+            println!("enable the `wgpu` feature for portable GPU discovery");
+        }
+    }
+
+    Ok(())
+}
 
 /// Write a `sha256sum`-compatible sidecar file at `sidecar_path`.
 ///
@@ -563,6 +687,13 @@ fn map_core_error(e: CoreError, operation: &str) -> anyhow::Error {
         CoreError::AlreadyExists { ref path } => {
             anyhow::anyhow!("{e}\nhint: use --force to overwrite `{}`", path.display())
         }
+        CoreError::AccelerationUnavailable { .. } => anyhow::anyhow!("{operation} failed: {e}"),
         other => anyhow::anyhow!("{other}").context(format!("{operation} failed")),
+    }
+}
+
+fn print_acceleration_notice(report: &Report, quiet: bool) {
+    if !quiet && let Some(notice) = &report.acceleration_notice {
+        eprintln!("warning: {notice}");
     }
 }

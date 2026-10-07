@@ -50,11 +50,13 @@ use std::{
 };
 
 use sha2::{Digest as _, Sha256};
+use tempfile::{Builder as TempFileBuilder, TempPath};
 
 use crate::{
-    Codec, Container, Error, Format, Level, Result,
+    AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
+    ProcessingBackend, ProviderRegistry, Result, acceleration,
     archive::{OpCtx, sevenz, tar, zip},
-    codec::{Encoder, new_decoder, new_encoder},
+    codec::{Encoder, lz4_accelerated, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
     progress::{CancelToken, Entry, Progress, Report, copy_with_progress},
@@ -67,6 +69,106 @@ use crate::archive::rar;
 // ---------------------------------------------------------------------------
 // Public option structs
 // ---------------------------------------------------------------------------
+
+/// Configured rcomp operation engine.
+///
+/// Free functions such as [`compress`] use a CPU-only engine. Applications
+/// that compile optional native provider crates can register them here without
+/// making `rcomp-core` depend on Metal, CUDA, or ROCm.
+#[derive(Clone, Default)]
+pub struct Engine {
+    providers: ProviderRegistry,
+    accelerator_target: Option<crate::AcceleratorTarget>,
+}
+
+impl Engine {
+    /// Create a CPU-only engine with no registered accelerator providers.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create an engine using an application-supplied provider registry.
+    #[must_use]
+    pub fn with_registry(providers: ProviderRegistry) -> Self {
+        Self {
+            providers,
+            accelerator_target: None,
+        }
+    }
+
+    /// Restrict acceleration to one exact provider device.
+    ///
+    /// This is primarily useful on systems with multiple GPUs and for
+    /// hardware qualification. CPU operation is unaffected.
+    #[must_use]
+    pub fn with_accelerator_target(mut self, target: crate::AcceleratorTarget) -> Self {
+        self.accelerator_target = Some(target);
+        self
+    }
+
+    /// Return the provider registry used by this engine.
+    #[must_use]
+    pub fn providers(&self) -> &ProviderRegistry {
+        &self.providers
+    }
+
+    /// Compress one input using this engine's registered providers.
+    pub fn compress(
+        &self,
+        input: &Path,
+        output: &Path,
+        opts: &CompressOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_compress(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            std::slice::from_ref(&input.to_path_buf()),
+            output,
+            opts,
+            false,
+            on_progress,
+        )
+    }
+
+    /// Compress multiple inputs into one archive using registered providers.
+    pub fn compress_many(
+        &self,
+        inputs: &[PathBuf],
+        output: &Path,
+        opts: &CompressOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_compress(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            inputs,
+            output,
+            opts,
+            true,
+            on_progress,
+        )
+    }
+
+    /// Extract one input using this engine's registered providers.
+    pub fn extract(
+        &self,
+        input: &Path,
+        dest: &Path,
+        opts: &ExtractOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_extract(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            input,
+            dest,
+            opts,
+            on_progress,
+        )
+    }
+}
 
 /// Options for a [`compress`] operation.
 ///
@@ -116,6 +218,8 @@ pub struct CompressOptions {
     ///
     /// Digest computation is streaming — no extra read pass is performed.
     pub checksum: bool,
+    /// Hardware-acceleration preference. Defaults to explicit CPU operation.
+    pub acceleration: AccelerationPreference,
 }
 
 impl Default for CompressOptions {
@@ -130,6 +234,7 @@ impl Default for CompressOptions {
             follow_gitignore: true,
             exclude: Vec::new(),
             checksum: false,
+            acceleration: AccelerationPreference::default(),
         }
     }
 }
@@ -152,15 +257,16 @@ pub struct ExtractOptions {
     pub overwrite: bool,
     /// Cancellation handle.  Cloning shares the same underlying flag.
     pub cancel: CancelToken,
-    /// Expected SHA-256 digest of the compressed input artifact (lowercase hex).
+    /// Expected SHA-256 digest of the compressed input artifact (hex, compared
+    /// case-insensitively).
     ///
     /// When `Some`, the input file is streamed through a SHA-256 hasher
     /// **before** any data is written to `dest`.  If the computed digest does
     /// not match, [`Error::ChecksumMismatch`] is returned with `kind =
     /// "artifact"` and the destination directory is left empty of files.
     pub verify_sha256: Option<String>,
-    /// Expected SHA-256 digest of the decompressed content stream (lowercase
-    /// hex).
+    /// Expected SHA-256 digest of the decompressed content stream (hex,
+    /// compared case-insensitively).
     ///
     /// When `Some`, the decompressed stream is teed through a SHA-256 hasher
     /// during extraction and compared at the end.  A mismatch returns
@@ -171,6 +277,8 @@ pub struct ExtractOptions {
     /// is always [`Error::UnsupportedOperation`] — those formats compress
     /// entries individually with no canonical content stream.
     pub verify_content_sha256: Option<String>,
+    /// Hardware-acceleration preference. Defaults to explicit CPU operation.
+    pub acceleration: AccelerationPreference,
 }
 
 // ---------------------------------------------------------------------------
@@ -210,13 +318,7 @@ pub fn compress(
     opts: &CompressOptions,
     on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
-    run_compress(
-        std::slice::from_ref(&input.to_path_buf()),
-        output,
-        opts,
-        false,
-        on_progress,
-    )
+    Engine::new().compress(input, output, opts, on_progress)
 }
 
 /// Compress one or more inputs into a **single** archive at `output`.
@@ -254,7 +356,7 @@ pub fn compress_many(
     opts: &CompressOptions,
     on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
-    run_compress(inputs, output, opts, true, on_progress)
+    Engine::new().compress_many(inputs, output, opts, on_progress)
 }
 
 /// Shared implementation behind [`compress`] and [`compress_many`].
@@ -266,6 +368,8 @@ pub fn compress_many(
 /// - `true` ([`compress_many`]) — each input's final path component is
 ///   preserved as a top-level root via [`collect_many`].
 fn run_compress(
+    providers: &ProviderRegistry,
+    accelerator_target: Option<&crate::AcceleratorTarget>,
     inputs: &[PathBuf],
     output: &Path,
     opts: &CompressOptions,
@@ -324,6 +428,17 @@ fn run_compress(
             operation: "compress".into(),
         });
     }
+
+    // Resolve acceleration only after the effective format (including the
+    // silent-tar promotion) is known, so provider matching is format-aware.
+    let acceleration = acceleration::select(
+        providers,
+        opts.acceleration,
+        accelerator_target,
+        Direction::Encode,
+        format,
+        Some(opts.level),
+    )?;
 
     // --- Overwrite check ---
     if output.exists() && !opts.overwrite {
@@ -386,24 +501,81 @@ fn run_compress(
         progress,
     };
 
+    // Output is staged beside the destination and only published (atomic
+    // rename) once complete. Keeping both paths on the same filesystem makes
+    // the rename atomic, so a failure or cancellation never exposes a partial
+    // archive or destroys an existing output that `overwrite` would replace.
+    let accelerated = acceleration.block_encoder.is_some();
+    let staged_output = staged_output_path(output)?;
+    let write_output: &Path = &staged_output;
+    let mut backend = acceleration.backend;
+    let mut acceleration_notice = acceleration.notice;
+    let mut acceleration_fallback = acceleration.fallback_reason;
+
     // --- Dispatch ---
     let result = do_compress(
         &dispatch_input,
-        output,
+        write_output,
         format,
         opts.level,
         &mut ctx,
         bytes_total,
         walk_result.as_ref().map(|wr| wr.entries.as_slice()),
         opts.checksum,
+        acceleration.block_encoder,
     );
+    // An accelerator can surface cancellation through an `io::Error` while it
+    // is used behind `Write`. Preserve the operation-level cancellation
+    // contract instead of exposing that implementation detail to callers.
+    let mut result = if result.is_err() && opts.cancel.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        result
+    };
 
-    // --- Best-effort cleanup on failure ---
-    if result.is_err() {
-        let _ = fs::remove_file(output);
+    // `Auto` may safely retry a failed accelerator because the output is
+    // isolated in a temporary sibling and has not been published.
+    // `Required`, cancellation, and unrelated I/O/codec failures never retry.
+    if opts.acceleration == AccelerationPreference::Auto
+        && accelerated
+        && !opts.cancel.is_cancelled()
+        && let Err(error) = &result
+        && let Some(provider_id) = acceleration_failure_provider(error)
+    {
+        let _ = fs::remove_file(write_output);
+        ctx.progress.bytes_done = 0;
+        ctx.progress.current_entry = None;
+        result = do_compress(
+            &dispatch_input,
+            write_output,
+            format,
+            opts.level,
+            &mut ctx,
+            bytes_total,
+            walk_result.as_ref().map(|wr| wr.entries.as_slice()),
+            opts.checksum,
+            None,
+        );
+        if result.is_ok() {
+            backend = ProcessingBackend::Cpu;
+            acceleration_notice = Some(format!(
+                "hardware provider `{provider_id}` failed during {format} encoding; retried successfully on CPU"
+            ));
+            acceleration_fallback = Some(
+                crate::AccelerationFallbackReason::ProviderExecutionFailedCpuRetry { provider_id },
+            );
+        }
     }
 
+    // On failure or late cancellation `staged_output` is dropped unpublished,
+    // which deletes it; the destination is never touched.
     let (entries, input_bytes, sha256, content_sha256) = result?;
+
+    if opts.cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    sync_staged_output(&staged_output)?;
+    publish_staged_output(staged_output, output, opts.overwrite)?;
 
     let output_bytes = fs::metadata(output).map(|m| m.len()).unwrap_or(0);
 
@@ -415,6 +587,75 @@ fn run_compress(
         duration: start.elapsed(),
         sha256,
         content_sha256,
+        backend,
+        acceleration_notice,
+        acceleration_fallback,
+    })
+}
+
+fn acceleration_failure_provider(error: &Error) -> Option<String> {
+    match error {
+        Error::AccelerationFailed { provider, .. } => Some(provider.clone()),
+        Error::Io(error) => error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<Error>())
+            .and_then(acceleration_failure_provider),
+        _ => None,
+    }
+}
+
+/// Create the temporary sibling that `output` is written to before publishing.
+///
+/// Temp files are normally created `0600`; the published archive should get
+/// the same mode a plain `File::create` would (`0666` minus the umask).  When
+/// it replaces an existing file, [`publish_staged_output`] keeps that file's
+/// mode instead.
+fn staged_output_path(output: &Path) -> Result<TempPath> {
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut builder = TempFileBuilder::new();
+    builder.prefix(".rcomp-").suffix(".tmp");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // `open(2)` applies the umask to this mode.
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    Ok(builder.tempfile_in(parent)?.into_temp_path())
+}
+
+fn sync_staged_output(path: &Path) -> Result<()> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()?;
+    Ok(())
+}
+
+fn publish_staged_output(staged: TempPath, output: &Path, overwrite: bool) -> Result<()> {
+    // Replacing a file in place used to keep its mode; keep doing that.
+    if overwrite
+        && let Ok(existing) = fs::metadata(output)
+        && existing.is_file()
+    {
+        fs::set_permissions(&staged, existing.permissions())?;
+    }
+    let result = if overwrite {
+        staged.persist(output)
+    } else {
+        staged.persist_noclobber(output)
+    };
+    result.map_err(|error| {
+        if error.error.kind() == io::ErrorKind::AlreadyExists {
+            Error::AlreadyExists {
+                path: output.to_path_buf(),
+            }
+        } else {
+            Error::Io(error.error)
+        }
     })
 }
 
@@ -444,6 +685,7 @@ fn do_compress(
     input_bytes_total: u64,
     walk_entries: Option<&[crate::walk::WalkEntry]>,
     checksum: bool,
+    mut block_encoder: Option<Box<dyn BlockEncoderSession>>,
 ) -> Result<(u64, u64, Option<String>, Option<String>)> {
     match (format.container, format.codec) {
         // 7z container (no codec layer — 7z carries its own LZMA2 codec).
@@ -508,9 +750,21 @@ fn do_compress(
             // HashingWriter first for the artifact digest.
             let mut encoder: Box<dyn Encoder> = if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                new_encoder(codec, Box::new(hw), level)?
+                selected_encoder(
+                    codec,
+                    Box::new(hw),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?
             } else {
-                new_encoder(codec, Box::new(out_file), level)?
+                selected_encoder(
+                    codec,
+                    Box::new(out_file),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?
             };
 
             let entries = {
@@ -592,26 +846,50 @@ fn do_compress(
                 // Build encoder, optionally wrapping output in HashingWriter.
                 if let Some(ref ah) = artifact_hasher {
                     let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                    let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                    let mut encoder = selected_encoder(
+                        codec,
+                        Box::new(hw),
+                        level,
+                        &mut block_encoder,
+                        ctx.cancel.clone(),
+                    )?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 } else {
-                    let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                    let mut encoder = selected_encoder(
+                        codec,
+                        Box::new(out_file),
+                        level,
+                        &mut block_encoder,
+                        ctx.cancel.clone(),
+                    )?;
                     let n = copy_with_progress(&mut hashing_in, &mut *encoder, ctx)?;
                     Box::new(encoder).finish()?;
                     n
                 }
             } else if let Some(ref ah) = artifact_hasher {
                 let hw = HashingWriter::new(out_file, Arc::clone(ah));
-                let mut encoder = new_encoder(codec, Box::new(hw), level)?;
+                let mut encoder = selected_encoder(
+                    codec,
+                    Box::new(hw),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?;
                 let mut in_file2 = in_file; // reuse (no content hasher in this branch)
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
             } else {
                 let mut in_file2 = in_file;
-                let mut encoder = new_encoder(codec, Box::new(out_file), level)?;
+                let mut encoder = selected_encoder(
+                    codec,
+                    Box::new(out_file),
+                    level,
+                    &mut block_encoder,
+                    ctx.cancel.clone(),
+                )?;
                 let n = copy_with_progress(&mut in_file2, &mut *encoder, ctx)?;
                 Box::new(encoder).finish()?;
                 n
@@ -630,6 +908,27 @@ fn do_compress(
                 operation: "compress".into(),
             })
         }
+    }
+}
+
+fn selected_encoder<'a>(
+    codec: Codec,
+    writer: Box<dyn Write + 'a>,
+    level: Level,
+    block_encoder: &mut Option<Box<dyn BlockEncoderSession>>,
+    cancel: CancelToken,
+) -> Result<Box<dyn Encoder + 'a>> {
+    if let Some(session) = block_encoder.take() {
+        if codec != Codec::Lz4 {
+            return Err(Error::AccelerationUnavailable {
+                reason: format!(
+                    "the selected raw-block accelerator cannot frame the {codec} codec"
+                ),
+            });
+        }
+        lz4_accelerated::encoder(session, writer, cancel)
+    } else {
+        new_encoder(codec, writer, level)
     }
 }
 
@@ -683,6 +982,17 @@ pub fn extract(
     input: &Path,
     dest: &Path,
     opts: &ExtractOptions,
+    on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    Engine::new().extract(input, dest, opts, on_progress)
+}
+
+fn run_extract(
+    providers: &ProviderRegistry,
+    accelerator_target: Option<&crate::AcceleratorTarget>,
+    input: &Path,
+    dest: &Path,
+    opts: &ExtractOptions,
     mut on_progress: impl FnMut(&Progress),
 ) -> Result<Report> {
     let start = Instant::now();
@@ -705,6 +1015,15 @@ pub fn extract(
         });
     }
 
+    let acceleration = acceleration::select(
+        providers,
+        opts.acceleration,
+        accelerator_target,
+        Direction::Decode,
+        format,
+        None,
+    )?;
+
     // --- Artifact verify: stream-hash the input BEFORE creating dest files ---
     //
     // We check the artifact digest before create_dir_all so that if there
@@ -713,7 +1032,7 @@ pub fn extract(
     // so an empty dest dir may be created; files are what matter.
     if let Some(ref expected) = opts.verify_sha256 {
         let actual = hash_file(input)?;
-        if actual != *expected {
+        if !actual.eq_ignore_ascii_case(expected) {
             return Err(Error::ChecksumMismatch {
                 kind: "artifact",
                 expected: expected.clone(),
@@ -782,6 +1101,9 @@ pub fn extract(
         duration: start.elapsed(),
         sha256: None,
         content_sha256: None,
+        backend: acceleration.backend,
+        acceleration_notice: acceleration.notice,
+        acceleration_fallback: acceleration.fallback_reason,
     })
 }
 
@@ -917,7 +1239,7 @@ fn do_extract(
             // Verify content digest after stream fully consumed.
             if let (Some(expected), Some(ch)) = (verify_content_sha256, content_hasher) {
                 let actual = finalize_shared(ch);
-                if actual != expected {
+                if !actual.eq_ignore_ascii_case(expected) {
                     return Err(Error::ChecksumMismatch {
                         kind: "content",
                         expected: expected.to_owned(),
@@ -986,7 +1308,7 @@ fn do_extract(
                     // Verify after stream consumed.
                     if let Some(expected) = verify_content_sha256 {
                         let actual = finalize_shared(Arc::clone(ch));
-                        if actual != expected {
+                        if !actual.eq_ignore_ascii_case(expected) {
                             return Err(Error::ChecksumMismatch {
                                 kind: "content",
                                 expected: expected.to_owned(),
@@ -1001,14 +1323,17 @@ fn do_extract(
                     let out_name = output_name_for_codec_file(input, codec)?;
                     let out_path = dest.join(&out_name);
 
-                    if out_path.exists() && !overwrite {
+                    if out_path.symlink_metadata().is_ok() && !overwrite {
                         return Err(Error::AlreadyExists { path: out_path });
                     }
 
                     ctx.set_entry(out_name.to_string_lossy().as_ref());
                     ctx.check_cancel()?;
 
-                    let mut out_file = fs::File::create(&out_path)?;
+                    // Decode into a staged sibling; it is only published once
+                    // the stream (and its digest) checks out.
+                    let staged = staged_output_path(&out_path)?;
+                    let mut out_file = fs::File::create(&staged)?;
                     // Write the already-sniffed (already hashed) bytes first,
                     // then copy the rest through the hashing decoder.
                     out_file.write_all(&sniff_bytes)?;
@@ -1023,7 +1348,7 @@ fn do_extract(
                     // Verify after stream consumed.
                     if let Some(expected) = verify_content_sha256 {
                         let actual = finalize_shared(Arc::clone(ch));
-                        if actual != expected {
+                        if !actual.eq_ignore_ascii_case(expected) {
                             return Err(Error::ChecksumMismatch {
                                 kind: "content",
                                 expected: expected.to_owned(),
@@ -1032,6 +1357,9 @@ fn do_extract(
                         }
                     }
 
+                    drop(out_file);
+                    ctx.check_cancel()?;
+                    publish_staged_output(staged, &out_path, overwrite)?;
                     Ok((1, compressed, output_bytes))
                 }
             } else {
@@ -1052,14 +1380,17 @@ fn do_extract(
                     let out_name = output_name_for_codec_file(input, codec)?;
                     let out_path = dest.join(&out_name);
 
-                    if out_path.exists() && !overwrite {
+                    if out_path.symlink_metadata().is_ok() && !overwrite {
                         return Err(Error::AlreadyExists { path: out_path });
                     }
 
                     ctx.set_entry(out_name.to_string_lossy().as_ref());
                     ctx.check_cancel()?;
 
-                    let mut out_file = fs::File::create(&out_path)?;
+                    // Decode into a staged sibling; it is only published once
+                    // the whole stream decoded cleanly.
+                    let staged = staged_output_path(&out_path)?;
+                    let mut out_file = fs::File::create(&staged)?;
                     out_file.write_all(&sniff_bytes)?;
                     let rest_written =
                         copy_decoder_synced(&mut *decoder, &mut out_file, ctx, &counter)?;
@@ -1068,6 +1399,10 @@ fn do_extract(
                     let compressed = counter.load(Ordering::Relaxed);
                     ctx.progress.bytes_done = compressed;
                     (ctx.on_progress)(&ctx.progress);
+
+                    drop(out_file);
+                    ctx.check_cancel()?;
+                    publish_staged_output(staged, &out_path, overwrite)?;
                     Ok((1, compressed, output_bytes))
                 }
             }
