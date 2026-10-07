@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, mpsc},
+    time::{Duration, Instant},
 };
 
 use rcomp_core::{
@@ -19,6 +20,13 @@ const WORKGROUP_SIZE: u32 = 64;
 const PORTABLE_BATCH_SIZE: usize = 64 * 1024 * 1024;
 const APPLE_SILICON_BATCH_SIZE: usize = 256 * 1024 * 1024;
 const PARAMETER_BYTES: usize = 32;
+/// Target GPU time per submission: a quarter of the 2 s Windows TDR timeout.
+const SUBMISSION_TIME_BUDGET: Duration = Duration::from_millis(500);
+/// One workgroup: smaller submissions only add overhead.
+const MIN_BLOCKS_PER_SUBMISSION: usize = WORKGROUP_SIZE as usize;
+/// 8 MiB. Measured at about 150 ms on a 2-CU Radeon iGPU with incompressible
+/// input, leaving room for much slower adapters before the cap adapts.
+const INITIAL_BLOCKS_PER_SUBMISSION: usize = 128;
 
 /// Portable `wgpu` acceleration provider.
 ///
@@ -43,6 +51,8 @@ struct GpuContext {
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     preferred_batch_size: usize,
+    /// Learned per device and shared by every session on it.
+    submission_budget: Mutex<SubmissionBudget>,
 }
 
 struct WgpuBlockEncoder {
@@ -311,6 +321,9 @@ impl GpuContext {
             queue,
             pipeline,
             preferred_batch_size,
+            submission_budget: Mutex::new(SubmissionBudget::new(
+                preferred_batch_size / LZ4_BLOCK_SIZE,
+            )),
         })
     }
 }
@@ -377,17 +390,6 @@ impl WgpuBlockEncoder {
         self.context
             .queue
             .write_buffer(&buffers.input, 0, &padded_input);
-        self.context.queue.write_buffer(
-            &buffers.parameters,
-            0,
-            &parameter_bytes(
-                total_size,
-                u32::try_from(output_slot_size).map_err(|_| WgpuError::InputTooLarge)?,
-                u32::try_from(output_slot_stride).map_err(|_| WgpuError::InputTooLarge)?,
-                u32::try_from(block_count).map_err(|_| WgpuError::InputTooLarge)?,
-            ),
-        );
-
         let layout = self.context.pipeline.get_bind_group_layout(0);
         let bind_group = self
             .context
@@ -404,35 +406,84 @@ impl WgpuBlockEncoder {
                 ],
             });
 
-        let mut encoder =
+        // A batch is compressed in several submissions, each a single
+        // dispatch sized by the device's time budget, so no GPU packet runs
+        // long enough to trip a driver watchdog (Windows TDR is 2 s). Each
+        // submission is awaited before the next: the queue runs them in order
+        // anyway, and the measured time steers the next submission's size.
+        // The queued parameter write is applied before the submission that
+        // follows it.
+        let output_slot_size_u32 =
+            u32::try_from(output_slot_size).map_err(|_| WgpuError::InputTooLarge)?;
+        let output_slot_stride_u32 =
+            u32::try_from(output_slot_stride).map_err(|_| WgpuError::InputTooLarge)?;
+        let mut next_block = 0;
+        while next_block < block_count {
+            let blocks = self
+                .context
+                .submission_budget
+                .lock()
+                .map_err(|_| {
+                    WgpuError::CommandExecution("GPU submission budget is poisoned".to_owned())
+                })?
+                .blocks()
+                .min(block_count - next_block);
+            let start = u32::try_from(next_block).map_err(|_| WgpuError::InputTooLarge)?;
+            let end = u32::try_from(next_block + blocks).map_err(|_| WgpuError::InputTooLarge)?;
+            self.context.queue.write_buffer(
+                &buffers.parameters,
+                0,
+                &parameter_bytes(
+                    total_size,
+                    output_slot_size_u32,
+                    output_slot_stride_u32,
+                    start,
+                    end,
+                ),
+            );
+            let mut encoder =
+                self.context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("rcomp portable LZ4 command encoder"),
+                    });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("rcomp portable LZ4 compute pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.context.pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.dispatch_workgroups((end - start).div_ceil(WORKGROUP_SIZE), 1, 1);
+            }
+            next_block += blocks;
+            if next_block == block_count {
+                encoder.copy_buffer_to_buffer(
+                    &buffers.sizes,
+                    0,
+                    &buffers.sizes_readback,
+                    0,
+                    sizes_capacity as u64,
+                );
+            }
+            let submitted = Instant::now();
+            let submission = self.context.queue.submit([encoder.finish()]);
             self.context
                 .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("rcomp portable LZ4 command encoder"),
-                });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("rcomp portable LZ4 compute pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.context.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(
-                u32::try_from(block_count)
-                    .map_err(|_| WgpuError::InputTooLarge)?
-                    .div_ceil(WORKGROUP_SIZE),
-                1,
-                1,
-            );
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: None,
+                })
+                .map_err(|error| WgpuError::CommandExecution(error.to_string()))?;
+            let elapsed = submitted.elapsed();
+            self.context
+                .submission_budget
+                .lock()
+                .map_err(|_| {
+                    WgpuError::CommandExecution("GPU submission budget is poisoned".to_owned())
+                })?
+                .record(blocks, elapsed);
         }
-        encoder.copy_buffer_to_buffer(
-            &buffers.sizes,
-            0,
-            &buffers.sizes_readback,
-            0,
-            sizes_capacity as u64,
-        );
-        self.context.queue.submit([encoder.finish()]);
 
         let sizes_slice = buffers.sizes_readback.slice(..sizes_capacity as u64);
         let (sizes_sender, sizes_receiver) = mpsc::sync_channel(1);
@@ -758,15 +809,16 @@ fn parameter_bytes(
     total_size: u32,
     output_slot_size: u32,
     output_slot_stride: u32,
-    block_count: u32,
+    block_offset: u32,
+    block_end: u32,
 ) -> [u8; PARAMETER_BYTES] {
     let values = [
         total_size,
         LZ4_BLOCK_SIZE as u32,
         output_slot_size,
         output_slot_stride,
-        block_count,
-        0,
+        block_end,
+        block_offset,
         0,
         0,
     ];
@@ -775,6 +827,49 @@ fn parameter_bytes(
         bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+/// Adaptive cap on the blocks compressed by one GPU submission.
+///
+/// A dispatch takes as long as its slowest block when the GPU runs every
+/// block at once (large discrete GPUs), and grows with the block count when it
+/// cannot (small integrated GPUs). A fixed split therefore either costs wide
+/// GPUs a multiple of their batch time or leaves narrow GPUs near the 2 s
+/// Windows TDR limit: on a Ryzen 7800X3D iGPU one 1,024-block submission of
+/// incompressible input took 1.36 s, while splitting an RTX 3090's realistic
+/// batches into 256-block submissions made them 3x slower.
+///
+/// The cap starts small, doubles after a full-size submission that finished
+/// within half the budget (so the next one should still fit even if time grows
+/// linearly with blocks), and halves after any submission over budget.
+#[derive(Debug)]
+struct SubmissionBudget {
+    blocks: usize,
+    max_blocks: usize,
+}
+
+impl SubmissionBudget {
+    fn new(max_blocks: usize) -> Self {
+        let max_blocks = max_blocks.max(MIN_BLOCKS_PER_SUBMISSION);
+        Self {
+            blocks: INITIAL_BLOCKS_PER_SUBMISSION.clamp(MIN_BLOCKS_PER_SUBMISSION, max_blocks),
+            max_blocks,
+        }
+    }
+
+    fn blocks(&self) -> usize {
+        self.blocks
+    }
+
+    fn record(&mut self, blocks: usize, elapsed: Duration) {
+        if elapsed > SUBMISSION_TIME_BUDGET {
+            self.blocks = (blocks / 2).max(MIN_BLOCKS_PER_SUBMISSION);
+        } else if blocks >= self.blocks && elapsed * 2 <= SUBMISSION_TIME_BUDGET {
+            // Only a full-size submission says anything about a larger one; a
+            // batch's short tail does not.
+            self.blocks = (self.blocks * 2).min(self.max_blocks);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1051,6 +1146,79 @@ mod tests {
         assert_eq!(adapters.len(), 2);
     }
 
+    /// Compress `batches` full 1,024-block batches with a simulated device and
+    /// return the cap afterwards plus every submission's (blocks, time).
+    fn simulate(
+        batches: usize,
+        device_time: impl Fn(usize) -> Duration,
+    ) -> (usize, Vec<(usize, Duration)>) {
+        let block_count = 1024;
+        let mut budget = SubmissionBudget::new(block_count);
+        let mut submissions = Vec::new();
+        for _ in 0..batches {
+            let mut next = 0;
+            while next < block_count {
+                let blocks = budget.blocks().min(block_count - next);
+                let elapsed = device_time(blocks);
+                budget.record(blocks, elapsed);
+                submissions.push((blocks, elapsed));
+                next += blocks;
+            }
+        }
+        (budget.blocks(), submissions)
+    }
+
+    #[test]
+    fn narrow_gpu_submissions_stay_within_the_tdr_budget() {
+        // Measured on a Ryzen 7800X3D iGPU with incompressible input: one
+        // 1,024-block dispatch took 1.36 s, about 1.33 ms per block.
+        let (blocks, submissions) =
+            simulate(3, |blocks| Duration::from_micros(1_330 * blocks as u64));
+        assert_eq!(blocks, 256);
+        assert!(
+            submissions
+                .iter()
+                .all(|(_, elapsed)| *elapsed <= SUBMISSION_TIME_BUDGET),
+            "{submissions:?}"
+        );
+    }
+
+    #[test]
+    fn wide_gpu_converges_to_whole_batches() {
+        // On an RTX 3090 every block of a batch runs at once, so a dispatch
+        // takes about as long as its slowest block whatever its size.
+        let (blocks, submissions) = simulate(2, |_| Duration::from_millis(230));
+        assert_eq!(blocks, 1024);
+        assert_eq!(
+            submissions.last(),
+            Some(&(1024, Duration::from_millis(230)))
+        );
+    }
+
+    #[test]
+    fn submission_budget_halves_after_an_overrun_but_not_below_one_workgroup() {
+        let mut budget = SubmissionBudget::new(1024);
+        budget.record(128, SUBMISSION_TIME_BUDGET + Duration::from_millis(1));
+        assert_eq!(budget.blocks(), MIN_BLOCKS_PER_SUBMISSION);
+        budget.record(64, Duration::from_secs(5));
+        assert_eq!(budget.blocks(), MIN_BLOCKS_PER_SUBMISSION);
+    }
+
+    #[test]
+    fn a_short_tail_submission_does_not_grow_the_budget() {
+        let mut budget = SubmissionBudget::new(1024);
+        budget.record(3, Duration::from_millis(1));
+        assert_eq!(budget.blocks(), INITIAL_BLOCKS_PER_SUBMISSION);
+    }
+
+    #[test]
+    fn submission_budget_never_exceeds_the_batch() {
+        let mut budget = SubmissionBudget::new(100);
+        assert_eq!(budget.blocks(), 100);
+        budget.record(100, Duration::from_millis(1));
+        assert_eq!(budget.blocks(), 100);
+    }
+
     #[test]
     fn output_slots_are_word_aligned() {
         let bound = lz4_compress_bound(LZ4_BLOCK_SIZE).unwrap();
@@ -1079,10 +1247,12 @@ mod tests {
 
     #[test]
     fn parameter_layout_matches_wgsl_uniform() {
-        let bytes = parameter_bytes(7, 11, 12, 2);
+        let bytes = parameter_bytes(7, 11, 12, 3, 5);
         assert_eq!(bytes.len(), 32);
         assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 7);
-        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 2);
+        // `block_end`, then `block_offset`, as declared in the WGSL struct.
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 5);
+        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 3);
     }
 
     #[test]
