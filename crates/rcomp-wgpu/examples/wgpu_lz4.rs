@@ -33,12 +33,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu_output = temporary.path().join("cpu-output.lz4");
     let input_size = fs::metadata(&input_path)?.len() as usize;
 
+    // Optional qualification knobs: an exact device ID from `rcomp hardware`
+    // and the number of warm GPU and CPU samples to take the median of.
+    let requested_device = env::var("RCOMP_WGPU_DEVICE").ok();
+    let samples = match env::var("RCOMP_WGPU_SAMPLES") {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|samples| *samples > 0)
+            .ok_or("RCOMP_WGPU_SAMPLES must be a positive integer")?,
+        Err(_) => 1,
+    };
+
     let provider = Arc::new(WgpuProvider::new()?);
-    let info = provider
-        .device_infos()
-        .into_iter()
-        .next()
-        .ok_or("no compatible portable GPU")?;
+    let infos = provider.device_infos();
+    let info = match &requested_device {
+        Some(device_id) => infos
+            .iter()
+            .find(|info| &info.device_id == device_id)
+            .cloned()
+            .ok_or_else(|| format!("RCOMP_WGPU_DEVICE={device_id} is not a compatible adapter"))?,
+        None => infos
+            .into_iter()
+            .next()
+            .ok_or("no compatible portable GPU")?,
+    };
     let target = AcceleratorTarget {
         provider_id: "wgpu".to_owned(),
         device_id: info.device_id.clone(),
@@ -56,25 +75,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cold_started = Instant::now();
     let cold_report = gpu_engine.compress(&input_path, &gpu_output, &gpu_options, |_| {})?;
     let cold_elapsed = cold_started.elapsed();
-    let warm_started = Instant::now();
-    let warm_report = gpu_engine.compress(&input_path, &gpu_output, &gpu_options, |_| {})?;
-    let warm_elapsed = warm_started.elapsed();
-
-    let cpu_started = Instant::now();
-    let cpu_report = Engine::new().compress(
-        &input_path,
-        &cpu_output,
-        &CompressOptions {
-            level: Level::Fast,
-            overwrite: true,
-            ..Default::default()
-        },
-        |_| {},
-    )?;
-    let cpu_elapsed = cpu_started.elapsed();
-
     verify(&gpu_output, &input_path)?;
-    verify(&cpu_output, &input_path)?;
+    let mut warm_samples = Vec::with_capacity(samples);
+    let mut warm_report = None;
+    for _ in 0..samples {
+        let warm_started = Instant::now();
+        warm_report = Some(gpu_engine.compress(&input_path, &gpu_output, &gpu_options, |_| {})?);
+        warm_samples.push(warm_started.elapsed());
+        verify(&gpu_output, &input_path)?;
+    }
+
+    let cpu_engine = Engine::new();
+    let cpu_options = CompressOptions {
+        level: Level::Fast,
+        overwrite: true,
+        ..Default::default()
+    };
+    let mut cpu_samples = Vec::with_capacity(samples);
+    let mut cpu_report = None;
+    for _ in 0..samples {
+        let cpu_started = Instant::now();
+        cpu_report = Some(cpu_engine.compress(&input_path, &cpu_output, &cpu_options, |_| {})?);
+        cpu_samples.push(cpu_started.elapsed());
+        verify(&cpu_output, &input_path)?;
+    }
+    let warm_report = warm_report.expect("at least one warm GPU sample ran");
+    let cpu_report = cpu_report.expect("at least one CPU sample ran");
+    let warm_elapsed = median(&warm_samples);
+    let cpu_elapsed = median(&cpu_samples);
 
     println!("Portable GPU LZ4 comparison passed");
     println!("  device: {}", info.name);
@@ -82,6 +110,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  device id: {}", info.device_id);
     println!("  driver: {} {}", info.driver, info.driver_info);
     println!("  input: {input_size} bytes");
+    println!("  warm samples (median reported): {samples}");
+    if samples > 1 {
+        println!("  warm portable GPU samples: {warm_samples:.3?}");
+        println!("  CPU Fast samples: {cpu_samples:.3?}");
+    }
     print_result(
         "cold portable GPU",
         input_size,
@@ -119,6 +152,13 @@ fn verify(frame: &Path, original: &Path) -> Result<(), Box<dyn std::error::Error
         return Err(format!("{} did not round-trip", frame.display()).into());
     }
     Ok(())
+}
+
+/// Returns the middle sample (upper middle for an even count).
+fn median(samples: &[Duration]) -> Duration {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
 }
 
 fn sample_input() -> Vec<u8> {

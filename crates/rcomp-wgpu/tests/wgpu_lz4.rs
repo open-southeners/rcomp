@@ -1,27 +1,27 @@
-use std::{fs, io::Read, sync::Arc};
+use std::{env, fs, io::Read, sync::Arc};
 
 use rcomp_core::{
-    AccelerationPreference, AccelerationRequest, AcceleratorProvider, Codec, CompressOptions,
-    Direction, Engine, Format, Level, ProcessingBackend, ProviderRegistry,
+    AccelerationPreference, AccelerationRequest, AcceleratorDevice, AcceleratorProvider,
+    AcceleratorTarget, Codec, CompressOptions, Direction, Engine, Format, Level, ProcessingBackend,
+    ProviderRegistry,
 };
 use rcomp_wgpu::WgpuProvider;
+
+/// Set to an exact device ID from `rcomp hardware` to qualify an adapter other
+/// than the first-ranked one.
+const DEVICE_VARIABLE: &str = "RCOMP_WGPU_DEVICE";
 
 #[test]
 #[ignore = "requires a compatible native GPU adapter and driver"]
 fn portable_provider_round_trips_lz4_through_core_framing() {
     let provider = Arc::new(WgpuProvider::new().expect("a compatible GPU adapter should exist"));
-    let devices = provider
-        .devices()
-        .expect("portable adapter discovery should succeed");
-    let selected = devices.first().expect("at least one compatible adapter");
+    let selected = select_device(&provider);
     let capabilities = provider
-        .capabilities(selected)
+        .capabilities(&selected)
         .expect("capability discovery should succeed");
     assert_eq!(capabilities.len(), 2);
 
-    let mut registry = ProviderRegistry::new();
-    registry.register(provider);
-    let engine = Engine::with_registry(registry);
+    let engine = targeted_engine(provider, &selected);
     let temporary = tempfile::tempdir().unwrap();
     let cases = [
         Vec::new(),
@@ -46,7 +46,7 @@ fn portable_provider_round_trips_lz4_through_core_framing() {
 #[ignore = "requires a compatible native GPU adapter and substantial GPU memory"]
 fn portable_provider_round_trips_across_multiple_batches() {
     let provider = Arc::new(WgpuProvider::new().expect("a compatible GPU adapter should exist"));
-    let selected = provider.devices().unwrap().remove(0);
+    let selected = select_device(&provider);
     let session = provider
         .open_block_encoder(&AccelerationRequest {
             device_id: selected.device_id.clone(),
@@ -57,12 +57,46 @@ fn portable_provider_round_trips_across_multiple_batches() {
         .unwrap();
     let input_size = session.preferred_batch_size() + 17;
     drop(session);
-    let mut registry = ProviderRegistry::new();
-    registry.register(provider);
-    let engine = Engine::with_registry(registry);
+    let engine = targeted_engine(provider, &selected);
     let temporary = tempfile::tempdir().unwrap();
     let input = patterned(input_size);
     round_trip(&engine, temporary.path(), 0, &selected.device_id, &input);
+}
+
+/// Pick the adapter named by [`DEVICE_VARIABLE`], or the first-ranked one.
+/// A named adapter that is absent fails the test instead of falling back.
+fn select_device(provider: &WgpuProvider) -> AcceleratorDevice {
+    let devices = provider
+        .devices()
+        .expect("portable adapter discovery should succeed");
+    let selected = match env::var(DEVICE_VARIABLE) {
+        Ok(device_id) => devices
+            .iter()
+            .find(|device| device.device_id == device_id)
+            .unwrap_or_else(|| {
+                let available = devices
+                    .iter()
+                    .map(|device| device.device_id.as_str())
+                    .collect::<Vec<_>>();
+                panic!("{DEVICE_VARIABLE}={device_id} is not one of {available:?}")
+            })
+            .clone(),
+        Err(_) => devices
+            .first()
+            .expect("at least one compatible adapter")
+            .clone(),
+    };
+    println!("qualifying {} ({})", selected.device_id, selected.name);
+    selected
+}
+
+fn targeted_engine(provider: Arc<WgpuProvider>, device: &AcceleratorDevice) -> Engine {
+    let mut registry = ProviderRegistry::new();
+    registry.register(provider);
+    Engine::with_registry(registry).with_accelerator_target(AcceleratorTarget {
+        provider_id: device.provider_id.clone(),
+        device_id: device.device_id.clone(),
+    })
 }
 
 fn round_trip(

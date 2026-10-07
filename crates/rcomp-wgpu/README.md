@@ -51,6 +51,12 @@ release comparison against CPU LZ4 can be run with:
 cargo run -p rcomp-wgpu --example wgpu-lz4 --release -- path/to/input
 ```
 
+Both the ignored suite and the example use the first-ranked adapter. To
+qualify another one, set `RCOMP_WGPU_DEVICE` to an exact device ID from
+`rcomp hardware`; an ID that is not present fails instead of falling back.
+The example also accepts `RCOMP_WGPU_SAMPLES=N` to report the median of `N`
+warm GPU and CPU runs.
+
 Apple M3 Max measurements and the portable/native comparison are recorded in
 [`BENCHMARKS.md`](./BENCHMARKS.md).
 
