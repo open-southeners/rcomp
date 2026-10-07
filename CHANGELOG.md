@@ -86,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-ASCII characters.
 - Desktop app: opening or inspecting a large archive no longer freezes the
   window.
+- Pressing Ctrl-C (or cancelling in the desktop app) while a large file was
+  being added to a `.tar.*` archive or a compressed folder no longer hangs at
+  full CPU. The operation now stops promptly and leaves no partial output.
 
 ### Security
 
