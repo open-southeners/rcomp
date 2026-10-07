@@ -36,11 +36,13 @@ use tar::{Archive, Builder, EntryType, Header};
 
 use crate::{Result, progress::Entry, walk::WalkEntry};
 
+#[cfg(unix)]
+use super::sanitize::sanitize_link_target;
 use super::{
     OpCtx,
     sanitize::{
         is_root_entry, prepare_dir, prepare_leaf, reject_symlinks_below, safe_mode,
-        sanitize_entry_path, sanitize_link_target,
+        sanitize_entry_path,
     },
 };
 
@@ -930,6 +932,7 @@ mod tests {
 
     /// Build a tar archive with a single symlink entry.  Both the link path
     /// and link target are written as raw bytes to bypass path validation.
+    #[cfg(unix)]
     fn make_malicious_symlink_tar(link_path: &[u8], link_target: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
         let mut header = Header::new_gnu();

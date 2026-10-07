@@ -36,12 +36,11 @@ use crate::{
     walk::WalkEntry,
 };
 
+#[cfg(unix)]
+use super::sanitize::{safe_mode, sanitize_link_target};
 use super::{
     OpCtx,
-    sanitize::{
-        is_root_entry, prepare_dir, prepare_leaf, safe_mode, sanitize_entry_path,
-        sanitize_link_target,
-    },
+    sanitize::{is_root_entry, prepare_dir, prepare_leaf, sanitize_entry_path},
 };
 
 // ---------------------------------------------------------------------------

@@ -136,6 +136,9 @@ pub(crate) fn is_root_entry(entry: &Path) -> bool {
 ///
 /// Returns [`Error::PathTraversal`] if the target is absolute or resolves
 /// outside `dest`.
+// Links are only created on unix, but the lexical check stays compiled and
+// unit-tested on every platform.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) fn sanitize_link_target(dest: &Path, link_path: &Path, target: &Path) -> Result<()> {
     // Step 1: absolute symlink targets are always rejected.
     if target.is_absolute() {
