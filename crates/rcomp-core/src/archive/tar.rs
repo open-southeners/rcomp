@@ -224,12 +224,12 @@ struct CountingReader<'a, 'b, R: Read> {
 impl<R: Read> Read for CountingReader<'_, '_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // Check for cancellation before each read so long archives are
-        // responsive to cancel signals.
+        // responsive to cancel signals. This must not use
+        // `ErrorKind::Interrupted`: `append_data` copies with `io::copy`, which
+        // retries `Interrupted` forever, so cancellation would spin instead of
+        // unwinding.
         if self.ctx.cancel.is_cancelled() {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "operation cancelled",
-            ));
+            return Err(io::Error::other(crate::Error::Cancelled));
         }
         let n = self.inner.read(buf)?;
         if n > 0 {

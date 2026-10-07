@@ -23,6 +23,9 @@ use std::{
     collections::HashSet,
     io::Write,
     path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 use flate2::{Compression, GzBuilder};
@@ -706,6 +709,48 @@ fn compress_pre_cancelled_returns_cancelled_no_output() {
         !archive.exists(),
         "no output file should remain after cancellation"
     );
+}
+
+#[test]
+fn compress_cancelled_inside_a_tar_entry_returns_promptly() {
+    // `tar::Builder::append_data` copies an entry body with `io::copy`, which
+    // retries `ErrorKind::Interrupted` forever. Cancelling while a large file
+    // is being archived used to spin there at 100% CPU and never return.
+    let src_dir = TempDir::new().unwrap();
+    std::fs::write(
+        src_dir.path().join("big.bin"),
+        vec![0x5a_u8; 8 * 1024 * 1024],
+    )
+    .unwrap();
+    let work = TempDir::new().unwrap();
+    let archive = work.path().join("cancelled.tar.gz");
+
+    let token = CancelToken::default();
+    let opts = CompressOptions {
+        cancel: token.clone(),
+        ..Default::default()
+    };
+    let (input, output) = (src_dir.path().to_path_buf(), archive.clone());
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = compress(&input, &output, &opts, |progress| {
+            if progress.bytes_done > 0 {
+                token.cancel();
+            }
+        });
+        let _ = sender.send(result);
+    });
+
+    let result = receiver
+        .recv_timeout(Duration::from_secs(30))
+        .expect("cancelling inside a tar entry should return instead of spinning");
+    let err = result.expect_err("should return Cancelled");
+    assert!(
+        matches!(err, Error::Cancelled),
+        "expected Cancelled, got {err:?}"
+    );
+    let leftovers = std::fs::read_dir(work.path()).unwrap().count();
+    assert_eq!(leftovers, 0, "no output or staging file should remain");
 }
 
 #[test]
