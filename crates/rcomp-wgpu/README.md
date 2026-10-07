@@ -57,7 +57,8 @@ qualify another one, set `RCOMP_WGPU_DEVICE` to an exact device ID from
 The example also accepts `RCOMP_WGPU_SAMPLES=N` to report the median of `N`
 warm GPU and CPU runs.
 
-Apple M3 Max measurements and the portable/native comparison are recorded in
+Apple M3 Max measurements, the portable/native comparison, and the Windows
+Direct3D 12 qualification on NVIDIA and AMD are recorded in
 [`BENCHMARKS.md`](./BENCHMARKS.md).
 
 Do not promote the provider to automatic selection until the Windows/DX12,

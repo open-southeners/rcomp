@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame round trips, and payload-only readback. The provider remains
   experimental because the portable Metal path is still slower than CPU and
   native Metal on the fixed 573 MiB corpus.
+- Qualified the portable GPU path on Windows (Direct3D 12) with an NVIDIA
+  GeForce RTX 3090 and an AMD Radeon integrated GPU. Output decodes with the
+  reference `lz4` tool and is byte-identical across both vendors. Cancellation
+  and failed runs never publish partial output. The path remains experimental
+  and opt-in because it is still slower than CPU LZ4 on this hardware.
 
 ### Changed
 
