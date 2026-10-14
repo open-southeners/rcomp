@@ -3551,7 +3551,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3570,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp-core"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "brotli",
  "bzip2",
@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp-desktop"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "drag",
  "objc2",
@@ -3615,7 +3615,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp-metal"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "dispatch2",
  "lz4",
@@ -3628,7 +3628,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp-quicklook"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "rcomp-core",
  "serde",
@@ -3638,7 +3638,7 @@ dependencies = [
 
 [[package]]
 name = "rcomp-wgpu"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "lz4",
  "naga",
