@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
   entry paths as returned by `list`, and writes each selected file or folder
   directly into the destination under its own name.
+- `rcomp-core` can add files and folders to an existing archive with
+  `add_to_archive` (and `Engine::add_to_archive`), configured by `AddOptions`
+  (target folder inside the archive, replace-on-clash, level, checksums). The
+  original archive is only replaced once the rebuilt one is complete.
 - Added shared hardware-acceleration selection for the core, CLI, and desktop
   app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop
   users can choose Automatic, CPU only, or Require GPU in Settings. Automatic
