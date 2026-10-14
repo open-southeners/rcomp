@@ -1,4 +1,5 @@
-//! Public top-level operations: [`compress`], [`extract`], and [`list`].
+//! Public top-level operations: [`compress`], [`extract`], [`add_to_archive`],
+//! and [`list`].
 //!
 //! These functions are the primary public API of `rcomp-core`.  They accept
 //! high-level options, dispatch to the right backend (tar, zip, or a raw codec
@@ -55,7 +56,7 @@ use tempfile::{Builder as TempFileBuilder, TempPath};
 use crate::{
     AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
     ProcessingBackend, ProviderRegistry, Result, acceleration,
-    archive::{OpCtx, Selection, sevenz, tar, zip},
+    archive::{OpCtx, Selection, sanitize::reject_symlinks_below, sevenz, tar, zip},
     codec::{Encoder, lz4_accelerated, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
@@ -147,6 +148,26 @@ impl Engine {
             output,
             opts,
             true,
+            on_progress,
+        )
+    }
+
+    /// Add inputs to an existing archive using registered providers.
+    ///
+    /// See [`add_to_archive`].
+    pub fn add_to_archive(
+        &self,
+        archive: &Path,
+        inputs: &[PathBuf],
+        opts: &AddOptions,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<Report> {
+        run_add(
+            &self.providers,
+            self.accelerator_target.as_ref(),
+            archive,
+            inputs,
+            opts,
             on_progress,
         )
     }
@@ -1425,6 +1446,313 @@ fn do_extract(
             operation: "extract".into(),
         }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// add_to_archive
+// ---------------------------------------------------------------------------
+
+/// Options for an [`add_to_archive`] operation.
+///
+/// ```no_run
+/// use rcomp_core::AddOptions;
+/// let opts = AddOptions { replace: true, ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AddOptions {
+    /// Override the archive format.  When `None`, it is detected from magic
+    /// bytes and/or the file extension, exactly like [`extract`].
+    pub format: Option<Format>,
+    /// Compression level used to rewrite the archive.  Defaults to
+    /// [`Level::Best`].
+    pub level: Level,
+    /// Folder inside the archive to add the inputs to, as reported by
+    /// [`list`].  `None` adds them at the archive root.  The folder is created
+    /// when the archive does not have it yet.
+    pub prefix: Option<PathBuf>,
+    /// Whether an input may replace an existing entry with the same name.
+    /// When `false`, a clash returns [`Error::AlreadyExists`] naming the entry
+    /// inside the archive, and the archive is left untouched.
+    pub replace: bool,
+    /// Cancellation handle.  Cloning shares the same underlying flag.
+    pub cancel: CancelToken,
+    /// When `true`, report SHA-256 digests of the rewritten archive, as
+    /// [`CompressOptions::checksum`] does.
+    pub checksum: bool,
+    /// Hardware-acceleration preference for re-compressing the archive.
+    pub acceleration: AccelerationPreference,
+}
+
+/// Add files and folders to an existing archive.
+///
+/// Every input becomes an entry named by its final path component, under
+/// `opts.prefix` (or the archive root).  A folder brings its whole tree;
+/// `.gitignore` files are **not** applied, so everything given is added.
+///
+/// # How it works
+///
+/// No supported container can be safely edited in place once compressed, so
+/// the archive is rebuilt: its current contents are extracted into a staging
+/// folder beside it, the inputs are placed alongside them, and the result is
+/// re-compressed in the same format.  The new archive replaces the original
+/// atomically only once it is complete, so a failure or cancellation at any
+/// point leaves the original untouched.  The staging folder needs as much free
+/// space as the archive's uncompressed contents (plus the inputs when
+/// `opts.prefix` is set, since they are copied into place).
+///
+/// A single-stream file (e.g. `notes.txt.gz`) holds exactly one file and
+/// cannot grow; a codec-only file that wraps a tarball is treated as the
+/// tarball it is.  Only regular files, directories, and (on Unix) symlinks
+/// are carried over; archive-level metadata such as a zip comment is not.
+///
+/// # Progress
+///
+/// Reported in two phases: while the existing contents are unpacked,
+/// `bytes_total` is `None`; the re-compression then reports like
+/// [`compress_many`].
+///
+/// # Errors
+///
+/// - [`Error::UnsupportedOperation`] — the archive is RAR (read-only) or a
+///   single-stream file.
+/// - [`Error::AlreadyExists`] — an input clashes with an existing entry and
+///   `opts.replace` is false.
+/// - [`Error::DuplicateInput`] — two inputs share the same final component.
+/// - [`Error::PathTraversal`] — `opts.prefix` leaves the archive root.
+/// - Anything [`extract`] or [`compress_many`] can return.
+pub fn add_to_archive(
+    archive: &Path,
+    inputs: &[PathBuf],
+    opts: &AddOptions,
+    on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    Engine::new().add_to_archive(archive, inputs, opts, on_progress)
+}
+
+fn run_add(
+    providers: &ProviderRegistry,
+    accelerator_target: Option<&crate::AcceleratorTarget>,
+    archive: &Path,
+    inputs: &[PathBuf],
+    opts: &AddOptions,
+    mut on_progress: impl FnMut(&Progress),
+) -> Result<Report> {
+    if inputs.is_empty() {
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no inputs provided",
+        )));
+    }
+
+    // Validate every input up front so nothing is unpacked for a request that
+    // cannot succeed.
+    let mut names: Vec<std::ffi::OsString> = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        fs::symlink_metadata(input)?;
+        let name = input.file_name().ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("input has no file name: {}", input.display()),
+            ))
+        })?;
+        if names.iter().any(|n| n == name) {
+            return Err(Error::DuplicateInput {
+                name: name.to_string_lossy().into_owned(),
+            });
+        }
+        names.push(name.to_os_string());
+    }
+
+    // A folder holding the archive would sweep up the staging folder and the
+    // archive being rewritten.
+    let archive_abs = fs::canonicalize(archive)?;
+    for input in inputs {
+        if archive_abs.starts_with(fs::canonicalize(input)?) {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("cannot add {} to an archive inside it", input.display()),
+            )));
+        }
+    }
+
+    let prefix = match &opts.prefix {
+        Some(p) => archive_relative(p)?,
+        None => PathBuf::new(),
+    };
+
+    let format = writable_format(archive, opts.format)?;
+
+    // Stage beside the archive so the final publish is a same-filesystem
+    // rename and an interrupted run leaves nothing behind once dropped.
+    let parent = archive
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let staging = TempFileBuilder::new()
+        .prefix(".rcomp-add-")
+        .tempdir_in(parent)?;
+    let tree = staging.path().join("contents");
+
+    // --- Phase 1: unpack the current contents ---
+    let extract_opts = ExtractOptions {
+        format: Some(format),
+        cancel: opts.cancel.clone(),
+        ..ExtractOptions::default()
+    };
+    run_extract(
+        providers,
+        accelerator_target,
+        archive,
+        &tree,
+        &extract_opts,
+        |p| {
+            on_progress(&Progress {
+                bytes_total: None,
+                ..p.clone()
+            })
+        },
+    )?;
+    opts.cancel_check()?;
+
+    // --- Phase 2: place the inputs ---
+    let dest_dir = tree.join(&prefix);
+    reject_symlinks_below(&tree, &dest_dir)?;
+    fs::create_dir_all(&dest_dir)?;
+    for (input, name) in inputs.iter().zip(&names) {
+        let target = dest_dir.join(name);
+        if let Ok(meta) = target.symlink_metadata() {
+            if !opts.replace {
+                return Err(Error::AlreadyExists {
+                    path: prefix.join(name),
+                });
+            }
+            if meta.is_dir() {
+                fs::remove_dir_all(&target)?;
+            } else {
+                fs::remove_file(&target)?;
+            }
+        }
+        // At the root the inputs are bundled straight from where they are;
+        // inside a folder they must be copied into the staged tree.
+        if !prefix.as_os_str().is_empty() {
+            copy_tree(input, &target, &opts.cancel)?;
+        }
+    }
+
+    let mut roots: Vec<PathBuf> = fs::read_dir(&tree)?
+        .map(|e| e.map(|e| e.path()))
+        .collect::<io::Result<_>>()?;
+    if prefix.as_os_str().is_empty() {
+        roots.extend(inputs.iter().cloned());
+    }
+    // A stable order keeps rebuilt archives deterministic.
+    roots.sort();
+
+    // --- Phase 3: rebuild and atomically replace the archive ---
+    let compress_opts = CompressOptions {
+        format: Some(format),
+        level: opts.level,
+        overwrite: true,
+        cancel: opts.cancel.clone(),
+        follow_gitignore: false,
+        exclude: Vec::new(),
+        checksum: opts.checksum,
+        acceleration: opts.acceleration,
+    };
+    run_compress(
+        providers,
+        accelerator_target,
+        &roots,
+        archive,
+        &compress_opts,
+        true,
+        on_progress,
+    )
+}
+
+impl AddOptions {
+    fn cancel_check(&self) -> Result<()> {
+        if self.cancel.is_cancelled() {
+            Err(Error::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Resolve the format `archive` can be rewritten in, refusing read-only and
+/// single-stream formats.
+fn writable_format(archive: &Path, explicit: Option<Format>) -> Result<Format> {
+    let format = match explicit {
+        Some(f) => f,
+        None => detect(archive)?,
+    };
+    if let Some(Container::Rar) = format.container {
+        return Err(Error::UnsupportedOperation {
+            format: format.to_string(),
+            operation: "add — RAR archives are read-only".into(),
+        });
+    }
+    match (format.container, format.codec) {
+        (None, Some(codec)) => {
+            // A codec-only file may still be a tarball (`backup.gz`): sniff it.
+            let file = BufReader::new(fs::File::open(archive)?);
+            let mut decoder = new_decoder(codec, Box::new(file))?;
+            let (is_tar, _) = sniff_tar_prefix(&mut *decoder)?;
+            if is_tar {
+                Ok(Format::layered(Container::Tar, codec))
+            } else {
+                Err(Error::UnsupportedOperation {
+                    format: format.to_string(),
+                    operation: "add — a single-stream file holds exactly one file; \
+                                create a tar-based archive instead"
+                        .into(),
+                })
+            }
+        }
+        _ => Ok(format),
+    }
+}
+
+/// Normalise an in-archive folder path to plain relative components.
+fn archive_relative(path: &Path) -> Result<PathBuf> {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::Normal(n) => out.push(n),
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(Error::PathTraversal {
+                    entry: path.to_path_buf(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Recursively copy `src` to `dst`, preserving permissions and recreating
+/// symlinks (on Unix) rather than following them.
+fn copy_tree(src: &Path, dst: &Path, cancel: &CancelToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let meta = fs::symlink_metadata(src)?;
+    if meta.file_type().is_symlink() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(fs::read_link(src)?, dst)?;
+        // Symlinks are not archived on other platforms; skip them likewise.
+    } else if meta.is_dir() {
+        fs::create_dir(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &dst.join(entry.file_name()), cancel)?;
+        }
+        fs::set_permissions(dst, meta.permissions())?;
+    } else {
+        fs::copy(src, dst)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
