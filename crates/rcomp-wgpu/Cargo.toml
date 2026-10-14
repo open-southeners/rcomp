@@ -14,7 +14,7 @@ name = "wgpu-lz4"
 path = "examples/wgpu_lz4.rs"
 
 [dependencies]
-rcomp-core = { path = "../rcomp-core", version = "0.3.3", default-features = false }
+rcomp-core = { path = "../rcomp-core", version = "0.4.0", default-features = false }
 thiserror.workspace = true
 pollster.workspace = true
 wgpu.workspace = true
