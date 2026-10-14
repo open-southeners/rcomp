@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ExtractOptions` has a new public `entries` field. Code that builds it with
   a struct literal must add `..Default::default()` (as the docs recommend).
+- New archives in the desktop app are named after the item when you compress
+  a single file or folder (for example `photos.tar.zst`), instead of `archive`.
 - Accelerated compression now writes to a synchronized temporary sibling and
   atomically publishes the completed artifact. Cancellation or provider
   failure removes staging data while preserving any existing destination.

@@ -86,13 +86,19 @@
     return idx > 0 ? normalized.slice(0, idx) : "";
   }
 
-  // Default the output path from the first staged item until the user edits it.
+  // Default the output path from the first staged item until the user edits
+  // it: a lone item names the archive after itself, a bundle is "archive".
   $effect(() => {
+    if (!outputTouched) outputPath = defaultOutput();
+  });
+
+  function defaultOutput(): string {
     const ext = extensionFor(selectedFormat);
     const dir = items.length > 0 ? dirName(items[0].path) : "";
-    const def = dir ? `${dir}/archive${ext}` : `archive${ext}`;
-    if (!outputTouched) outputPath = def;
-  });
+    const stem = items.length === 1 ? items[0].name : "archive";
+    const name = `${stem}${ext}`;
+    return dir ? `${dir}/${name}` : name;
+  }
 
   function parseExclude(text: string): string[] {
     return text
