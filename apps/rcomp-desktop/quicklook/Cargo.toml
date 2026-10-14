@@ -1,0 +1,19 @@
+[package]
+name = "rcomp-quicklook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C ABI over rcomp-core's archive listing for the macOS Quick Look extension"
+publish = false
+
+[lib]
+# Linked into the Swift Quick Look extension by `build.sh`.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+rcomp-core = { path = "../../../crates/rcomp-core", features = ["serde", "rar"] }
+serde = { workspace = true }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = { workspace = true }

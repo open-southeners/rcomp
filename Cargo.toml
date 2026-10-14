@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "apps/rcomp-desktop/src-tauri"]
+members = ["crates/*", "apps/rcomp-desktop/src-tauri", "apps/rcomp-desktop/quicklook"]
 default-members = ["crates/rcomp-core", "crates/rcomp"]
 resolver = "3"
 

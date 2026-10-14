@@ -52,6 +52,10 @@ or, on archives, **Decompress with Rcomp**:
 | Windows | Explorer context menu (on Windows 11, under *Show more options*), installed by both the `.exe` and `.msi` installers |
 | Linux | Dolphin, Nemo, and Nautilus (needs `python3-nautilus`), installed by the `.deb` and `.rpm` packages; not available for the AppImage |
 
+**Quick Look (macOS 12+).** Press Space on an archive in Finder to preview its
+contents. If another archive previewer such as BetterZip is installed, macOS
+picks which one is shown.
+
 ## Usage
 
 ```

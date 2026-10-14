@@ -12,6 +12,14 @@ A Cargo workspace (edition 2024, resolver 3) with two crates:
   argument parsing, prompts, progress bars, and exit codes. A Tauri desktop app is the
   planned second consumer, so keep policy/UX in the CLI and keep the core UI-agnostic.
 
+The desktop app lives in `apps/rcomp-desktop` (Svelte frontend + `src-tauri`). Its macOS
+Quick Look extension is `apps/rcomp-desktop/quicklook`: the `rcomp-quicklook` staticlib
+(`publish = false`, C ABI over `list`) plus Swift sources, built and signed by
+`quicklook/build.sh` as Tauri's macOS `beforeBundleCommand`. File-manager context menus are
+declared in `src-tauri/Info.plist` (macOS services, see `services.rs`), `src-tauri/windows/`
+(NSIS/WiX) and `src-tauri/linux/` (deb/rpm files); all launch the app with
+`--compress`/`--decompress`.
+
 The core takes an `on_progress: impl FnMut(&Progress)` callback and a `CancelToken`
 rather than touching the terminal itself — preserve that boundary when adding features.
 

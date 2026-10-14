@@ -3627,6 +3627,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcomp-quicklook"
+version = "0.3.3"
+dependencies = [
+ "rcomp-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rcomp-wgpu"
 version = "0.3.3"
 dependencies = [
