@@ -12,9 +12,9 @@
 use std::{fs, path::Path, str::FromStr, time::Instant};
 
 use rcomp_core::{
-    AccelerationPreference, CompressOptions, Engine, Entry, Error as CoreError, ExtractOptions,
-    Format, Level, ProviderRegistry, Report, detect, distinct_roots, format_sidecar, list,
-    parse_sidecar, wrap_dir_name,
+    AccelerationPreference, AddOptions, CompressOptions, Engine, Entry, Error as CoreError,
+    ExtractOptions, Format, Level, ProviderRegistry, Report, detect, distinct_roots,
+    format_sidecar, list, parse_sidecar, wrap_dir_name,
 };
 
 use crate::{
@@ -58,6 +58,29 @@ pub struct ExtractOpts {
     pub verify_sha256: Option<String>,
     /// Expected SHA-256 digest of the decompressed content stream (lowercase hex).
     pub verify_content_sha256: Option<String>,
+    /// Hardware-acceleration preference selected in Settings.
+    #[serde(default)]
+    pub acceleration: AccelerationPreference,
+    /// Extract only these entries (paths as returned by `list_entries`).
+    /// Empty extracts the whole archive.
+    #[serde(default)]
+    pub entries: Vec<String>,
+}
+
+/// Deserialised options forwarded from the frontend for adding files to an
+/// existing archive.
+#[derive(serde::Deserialize)]
+pub struct AddOpts {
+    /// Compression level used to rewrite the archive; defaults to
+    /// [`Level::default`] (`Best`).
+    pub level: Option<Level>,
+    /// Folder inside the archive to add into (a path from `list_entries`);
+    /// `None` adds at the root.
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Whether an added item may replace an entry of the same name.
+    #[serde(default)]
+    pub replace: bool,
     /// Hardware-acceleration preference selected in Settings.
     #[serde(default)]
     pub acceleration: AccelerationPreference,
@@ -220,6 +243,25 @@ pub fn do_extract(
     let format = parse_format(opts.format.as_deref())?;
     let core_opts = extract_options(opts, format, reg.register(job_id.to_string()));
     let result = run_extract(input, dest, &core_opts, sink);
+    reg.finish(job_id);
+    result
+}
+
+/// Add `inputs` to the existing archive at `archive`.
+///
+/// Mirrors `do_compress` in its registration, throttle, and final-event
+/// guarantee semantics.  When the archive has a `.sha256` sidecar, it is
+/// rewritten with the new digests so it never describes the old bytes.
+pub fn do_add_to_archive(
+    reg: &JobRegistry,
+    job_id: &str,
+    archive: &Path,
+    inputs: &[std::path::PathBuf],
+    opts: AddOpts,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    let core_opts = add_options(archive, opts, reg.register(job_id.to_string()));
+    let result = run_add_to_archive(archive, inputs, &core_opts, sink);
     reg.finish(job_id);
     result
 }
@@ -399,7 +441,21 @@ fn extract_options(
         verify_sha256: opts.verify_sha256,
         verify_content_sha256: opts.verify_content_sha256,
         acceleration: opts.acceleration,
-        entries: Vec::new(),
+        entries: opts.entries.into_iter().map(Into::into).collect(),
+    }
+}
+
+/// Build core add options.  Digests are only computed when a sidecar exists
+/// that must be refreshed afterwards.
+fn add_options(archive: &Path, opts: AddOpts, cancel: rcomp_core::CancelToken) -> AddOptions {
+    AddOptions {
+        format: None,
+        level: opts.level.unwrap_or_default(),
+        prefix: opts.prefix.map(Into::into),
+        replace: opts.replace,
+        cancel,
+        checksum: sidecar_path_for(archive).is_file(),
+        acceleration: opts.acceleration,
     }
 }
 
@@ -434,6 +490,21 @@ fn run_extract(
     run_with_progress(sink, |on_progress| {
         operation_engine(opts.acceleration).extract(input, dest, opts, on_progress)
     })
+}
+
+fn run_add_to_archive(
+    archive: &Path,
+    inputs: &[std::path::PathBuf],
+    opts: &AddOptions,
+    sink: &mut dyn FnMut(ProgressEvent),
+) -> Result<Report, IpcError> {
+    let report = run_with_progress(sink, |on_progress| {
+        operation_engine(opts.acceleration).add_to_archive(archive, inputs, opts, on_progress)
+    })?;
+    if let Some(artifact) = report.sha256.as_deref() {
+        do_write_sidecar(archive, artifact, report.content_sha256.as_deref())?;
+    }
+    Ok(report)
 }
 
 /// Run one core operation, forwarding throttled progress to `sink` and, on
@@ -639,6 +710,37 @@ pub async fn extract(
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         run_extract(&input_path, &dest_path, &core_opts, &mut |e| {
+            let _ = channel.send(e);
+        })
+    })
+    .await;
+
+    registry.finish(&job_id);
+    join_result(result)
+}
+
+/// Add `inputs` to the archive at `archive`, streaming [`ProgressEvent`]s via
+/// `channel`.
+///
+/// The archive is rebuilt and atomically replaced (see
+/// [`rcomp_core::add_to_archive`]).  Uses the same State/spawn_blocking
+/// lifetime strategy as [`compress`].
+#[tauri::command]
+pub async fn add_to_archive(
+    job_id: String,
+    archive: String,
+    inputs: Vec<String>,
+    opts: AddOpts,
+    channel: tauri::ipc::Channel<ProgressEvent>,
+    registry: tauri::State<'_, JobRegistry>,
+) -> Result<Report, IpcError> {
+    let archive_path = std::path::PathBuf::from(archive);
+    let core_opts = add_options(&archive_path, opts, registry.register(job_id.clone()));
+    let input_paths: Vec<std::path::PathBuf> =
+        inputs.into_iter().map(std::path::PathBuf::from).collect();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        run_add_to_archive(&archive_path, &input_paths, &core_opts, &mut |e| {
             let _ = channel.send(e);
         })
     })
@@ -1156,6 +1258,53 @@ mod tests {
         assert_eq!(
             info.wrap_dir, "data",
             "wrap_dir should be the stem of the archive file name"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Test: adding to an archive refreshes an existing sidecar
+    // ------------------------------------------------------------------
+    #[test]
+    fn add_to_archive_refreshes_existing_sidecar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = write_small_file(dir.path(), "a.txt", b"alpha");
+        let archive = dir.path().join("bundle.zip");
+        rcomp_core::compress_many(
+            &[a],
+            &archive,
+            &CompressOptions {
+                follow_gitignore: false,
+                ..Default::default()
+            },
+            |_| {},
+        )
+        .expect("build archive");
+        do_write_sidecar(&archive, &"0".repeat(64), None).expect("stale sidecar");
+
+        let extra = dir.path().join("more");
+        fs::create_dir(&extra).unwrap();
+        let b = write_small_file(&extra, "b.txt", b"beta");
+        let reg = JobRegistry::default();
+        let opts = AddOpts {
+            level: Some(Level::Fast),
+            prefix: None,
+            replace: false,
+            acceleration: AccelerationPreference::Cpu,
+        };
+        let report =
+            do_add_to_archive(&reg, "add-1", &archive, &[b], opts, &mut |_| {}).expect("add");
+
+        let names: Vec<_> = list(&archive)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path.to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"a.txt".to_owned()) && names.contains(&"b.txt".to_owned()));
+        let sidecar = do_read_sidecar(&archive).expect("sidecar");
+        assert_eq!(sidecar.artifact_sha256, report.sha256);
+        assert_ne!(
+            sidecar.artifact_sha256.as_deref(),
+            Some("0".repeat(64).as_str())
         );
     }
 }

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Drag & drop archive editing** in the desktop app. Drag entries out of an
+  open archive to extract just those items wherever you drop them (Finder,
+  Explorer, Linux file managers). Drop files or folders onto an open archive to
+  add them, either at the root or into the folder row under the cursor; items
+  with the same name are replaced after confirmation. Files dropped right after
+  creating an archive are added to that new archive. Adding works for zip, 7z,
+  tar and compressed tarballs (the archive is rebuilt and swapped in only once
+  complete); RAR archives and single compressed files are read-only.
 - `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
   entry paths as returned by `list`, and writes each selected file or folder
   directly into the destination under its own name.

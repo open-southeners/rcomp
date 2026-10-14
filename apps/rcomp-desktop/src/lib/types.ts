@@ -145,6 +145,18 @@ export interface ExtractOpts {
   verify_sha256?: string | null;
   verify_content_sha256?: string | null;
   acceleration: "cpu" | "auto" | "required";
+  /** Extract only these entry paths (as listed); omitted/empty = everything. */
+  entries?: string[];
+}
+
+/** Options for adding items to an existing archive. Field names are snake_case (serde). */
+export interface AddOpts {
+  level?: "Fast" | "Best" | "Edge" | null;
+  /** Folder inside the archive to add into; `null` adds at the root. */
+  prefix?: string | null;
+  /** Whether added items may replace entries of the same name. */
+  replace: boolean;
+  acceleration: "cpu" | "auto" | "required";
 }
 
 /**

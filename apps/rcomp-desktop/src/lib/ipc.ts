@@ -19,6 +19,7 @@ import type {
   ProgressEvent,
   CompressOpts,
   ExtractOpts,
+  AddOpts,
 } from "./types";
 
 /**
@@ -193,4 +194,38 @@ export async function extract(
   const channel = new Channel<ProgressEvent>();
   channel.onmessage = onProgress;
   return invoke<Report>("extract", { jobId, input, dest, opts, channel });
+}
+
+/**
+ * Add `inputs` to the existing archive at `archive`, streaming progress via
+ * `onProgress`.  The archive is rebuilt and replaced atomically once the new
+ * copy is complete; an existing `.sha256` sidecar is refreshed.
+ */
+export async function addToArchive(
+  jobId: string,
+  archive: string,
+  inputs: string[],
+  opts: AddOpts,
+  onProgress: (e: ProgressEvent) => void,
+): Promise<Report> {
+  const channel = new Channel<ProgressEvent>();
+  channel.onmessage = onProgress;
+  return invoke<Report>("add_to_archive", { jobId, archive, inputs, opts, channel });
+}
+
+/**
+ * Extract `entries` of `archive` to a temporary folder and start a native
+ * drag carrying them, so they can be dropped into the file manager.  Call
+ * while the mouse button is still held (from `dragstart`).
+ */
+export async function dragOut(jobId: string, archive: string, entries: string[]): Promise<void> {
+  return invoke<void>("drag_out", { jobId, archive, entries });
+}
+
+/**
+ * The folder drag-out files are staged under.  Drops of paths inside it are
+ * the app's own drag-out coming back, not files to add.
+ */
+export async function dragStagingRoot(): Promise<string> {
+  return invoke<string>("drag_staging_root");
 }

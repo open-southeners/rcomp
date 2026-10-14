@@ -5,6 +5,12 @@
    * Purely presentational: the parent maps either archive entries (Open mode)
    * or staged inputs (Compose mode) into a uniform list of {@link FileRow}s.
    * Removable rows (Compose) show an ✕ button wired to `onRemove`.
+   *
+   * When `onDragOut` is given (Open mode), rows are selectable (click,
+   * ⌘/Ctrl-click, Shift-click, ⌘/Ctrl-A) and draggable: dragging a row hands
+   * the selection — or just that row, if it is not selected — to the parent,
+   * which starts a native drag out to the file manager.  Every row carries
+   * `data-row-key` so the parent can resolve an OS drop position to a row.
    */
   import { onMount, onDestroy } from "svelte";
   import { humanBytes } from "../types";
@@ -29,6 +35,12 @@
     /** When provided, shows an "Add Files" button in the header and a
      *  drag & drop hint above the table (Compose mode only). */
     onAddFiles?: () => void;
+    /** Enables selection and dragging rows out; receives the dragged keys. */
+    onDragOut?: (keys: string[]) => void;
+    /** Shows the drop banner with this text while files are dragged over. */
+    dropLabel?: string | null;
+    /** Row highlighted as the folder a drop would land in. */
+    dropTargetKey?: string | null;
   }
 
   let {
@@ -43,7 +55,65 @@
     searchQuery,
     onSearchChange,
     onAddFiles,
+    onDragOut,
+    dropLabel = null,
+    dropTargetKey = null,
   }: Props = $props();
+
+  // --- selection (only meaningful when rows can be dragged out) ---
+  let selected = $state<string[]>([]);
+  let anchor = $state<string | null>(null);
+
+  // Drop selected keys that no longer exist (archive reloaded, filtered).
+  $effect(() => {
+    const live = new Set(rows.map((r) => r.key));
+    if (selected.some((k) => !live.has(k))) {
+      selected = selected.filter((k) => live.has(k));
+    }
+  });
+
+  function handleRowClick(e: MouseEvent, key: string): void {
+    if (!onDragOut) return;
+    if (e.shiftKey && anchor) {
+      const keys = rows.map((r) => r.key);
+      const a = keys.indexOf(anchor);
+      const b = keys.indexOf(key);
+      if (a !== -1 && b !== -1) {
+        selected = keys.slice(Math.min(a, b), Math.max(a, b) + 1);
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      selected = selected.includes(key)
+        ? selected.filter((k) => k !== key)
+        : [...selected, key];
+    } else {
+      selected = [key];
+    }
+    anchor = key;
+  }
+
+  function handleTableKeydown(e: KeyboardEvent): void {
+    if (!onDragOut) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      selected = rows.map((r) => r.key);
+    } else if (e.key === "Escape") {
+      selected = [];
+    }
+  }
+
+  function handleDragStart(e: DragEvent, key: string): void {
+    // The webview cannot carry real files; cancel its drag and let the
+    // parent start a native one instead.
+    e.preventDefault();
+    if (!onDragOut) return;
+    if (!selected.includes(key)) {
+      selected = [key];
+      anchor = key;
+    }
+    onDragOut([...selected]);
+  }
 
   function handleDropHintKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter" || e.key === " ") {
@@ -114,6 +184,10 @@
     </div>
   {/if}
 
+  {#if dropLabel}
+    <div class="drop-banner" role="status">{dropLabel}</div>
+  {/if}
+
   {#if loading}
     <p class="state-msg">Loading…</p>
   {:else if error}
@@ -121,7 +195,15 @@
   {:else if rows.length === 0}
     <p class="state-msg">{emptyMessage}</p>
   {:else}
-    <div class="table-wrap">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="table-wrap"
+      class:drop-active={!!dropLabel}
+      tabindex={onDragOut ? 0 : undefined}
+      onkeydown={handleTableKeydown}
+      role={onDragOut ? "listbox" : undefined}
+      aria-multiselectable={onDragOut ? "true" : undefined}
+    >
       <table>
         <thead>
           <tr>
@@ -134,7 +216,15 @@
         </thead>
         <tbody>
           {#each rows as row (row.key)}
-            <tr>
+            <tr
+              data-row-key={row.key}
+              class:selected={selected.includes(row.key)}
+              class:drop-target={dropTargetKey === row.key}
+              draggable={onDragOut ? "true" : undefined}
+              onclick={(e) => handleRowClick(e, row.key)}
+              ondragstart={(e) => handleDragStart(e, row.key)}
+              aria-selected={onDragOut ? selected.includes(row.key) : undefined}
+            >
               <td class="col-name">
                 <span class="row-icon">{row.isDir ? "📁" : "📄"}</span>
                 {row.isDir && !row.name.endsWith("/") ? row.name + "/" : row.name}
@@ -304,6 +394,16 @@
     color: var(--text-faint);
   }
 
+  .drop-banner {
+    padding: 0.45rem 0.75rem;
+    border: 1px dashed var(--accent);
+    border-radius: 8px;
+    background: var(--accent-subtle-bg);
+    color: var(--accent-subtle-fg);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
   .state-msg {
     color: var(--text-muted);
     font-size: 0.9rem;
@@ -353,6 +453,29 @@
 
   tr:last-child td {
     border-bottom: none;
+  }
+
+  .table-wrap:focus {
+    outline: none;
+  }
+
+  .table-wrap.drop-active {
+    border-color: var(--accent);
+  }
+
+  tr[draggable="true"] {
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  tr.selected td {
+    background: var(--accent-subtle-bg);
+  }
+
+  tr.drop-target td {
+    background: var(--accent-subtle-bg);
+    box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
   }
 
   .col-name {

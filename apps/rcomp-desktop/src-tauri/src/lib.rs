@@ -1,5 +1,7 @@
 pub mod changelog;
 pub mod commands;
+#[cfg(desktop)]
+pub mod drag_out;
 pub mod error;
 pub mod job;
 pub mod menu;
@@ -79,6 +81,11 @@ pub fn run() {
             commands::read_sidecar,
             commands::write_sidecar,
             commands::wrap_info,
+            commands::add_to_archive,
+            #[cfg(desktop)]
+            drag_out::drag_out,
+            #[cfg(desktop)]
+            drag_out::drag_staging_root,
             open_files::get_launch_paths,
             changelog::get_changelog,
         ])
@@ -92,6 +99,12 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    // Sweep drag-out staging folders left over from earlier sessions.
+    #[cfg(desktop)]
+    if let Ok(root) = drag_out::staging_root(app.handle()) {
+        std::thread::spawn(move || drag_out::purge_stale(&root));
+    }
 
     // Capture file paths passed as launch arguments (Windows/Linux "open with"
     // on first launch).  Buffered until the frontend drains them on startup.

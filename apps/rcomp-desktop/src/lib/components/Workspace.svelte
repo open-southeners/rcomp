@@ -13,6 +13,11 @@
    * An in-flight operation (`run`) and the post-operation `result` render in a
    * side panel (shared by both modes) so the file list stays in view
    * throughout. Settings is a separate overlay, reachable from any mode.
+   *
+   * Drag & drop with an archive open edits it: files dropped onto the list are
+   * added to the archive (into the folder row under the cursor, if any), and
+   * rows dragged out of the list are extracted where they are dropped. Files
+   * dropped right after compressing are added to the archive just created.
    */
   import { onMount, onDestroy } from "svelte";
   import DropZone from "./DropZone.svelte";
@@ -24,8 +29,9 @@
   import SettingsView from "./SettingsView.svelte";
   import ChangelogView from "./ChangelogView.svelte";
   import TitleBar from "./TitleBar.svelte";
-  import { onFileDrop } from "../dragdrop";
-  import { pickFile, pickFiles, pickFolder } from "../dialogs";
+  import { onFileDrag } from "../dragdrop";
+  import type { DragPoint } from "../dragdrop";
+  import { pickFile, pickFiles, pickFolder, confirmDialog } from "../dialogs";
   import {
     inspectPath,
     listEntries,
@@ -36,6 +42,9 @@
     onMenuNewArchiveFromFiles,
     onMenuNewArchiveFromFolder,
     onMenuCloseArchive,
+    addToArchive,
+    dragOut,
+    dragStagingRoot,
   } from "../ipc";
   import { loadAppearance, applyAppearance } from "../theme";
   import {
@@ -111,6 +120,14 @@
 
   let globalError = $state<string | null>(null);
 
+  // --- drag & drop editing ---
+  /** Folder drag-out files are staged in; drops from there are our own. */
+  let stagingRoot: string | null = null;
+  /** An OS file drag over the window that would add to an archive. */
+  let fileDrag = $state<{ key: string | null; prefix: string | null } | null>(null);
+  /** Entries being extracted for a drag-out, before the native drag starts. */
+  let dragOutCount = $state(0);
+
   let unlistenDrop: (() => void) | null = null;
   let unlistenOpen: (() => void) | null = null;
   let unlistenChangelog: (() => void) | null = null;
@@ -175,6 +192,133 @@
         ]
       : undefined,
   );
+
+  // -------------------------------------------------------------------------
+  // Drag & drop editing of an archive.
+  // -------------------------------------------------------------------------
+
+  /** An entry path without `./` prefixes or a trailing separator. */
+  function normEntry(p: string): string {
+    return p.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  }
+
+  /** The archive a drop would add to right now, if any. */
+  function dropArchive(): string | null {
+    if (run || showSettings || showChangelog) return null;
+    if (mode === "open" && !result && !entriesLoading && !entriesError) return archivePath;
+    if (result?.kind === "compress") return result.dest;
+    return null;
+  }
+
+  function isOwnDragOut(paths: string[]): boolean {
+    const root = stagingRoot;
+    return root !== null && paths.every((p) => p.startsWith(root));
+  }
+
+  /**
+   * Resolve a drop position to the folder inside the open archive it lands
+   * in: a folder row is the folder itself, a file row its parent folder,
+   * anywhere else the archive root.
+   */
+  function dropTargetAt(at: DragPoint): { key: string | null; prefix: string | null } {
+    if (mode !== "open") return { key: null, prefix: null };
+    const el = document.elementFromPoint(at.x, at.y)?.closest("[data-row-key]");
+    const key = el?.getAttribute("data-row-key") ?? null;
+    const row = key ? rows.find((r) => r.key === key) : undefined;
+    if (!key || !row) return { key: null, prefix: null };
+    if (row.isDir) return { key, prefix: normEntry(key) };
+    const parent = normEntry(key).split("/").slice(0, -1).join("/");
+    return { key: null, prefix: parent || null };
+  }
+
+  async function handleDrop(paths: string[], at: DragPoint): Promise<void> {
+    const archive = dropArchive();
+    if (!archive) {
+      await routePaths(paths);
+      return;
+    }
+    if (mode === "open") {
+      await addItemsToArchive(archive, paths, dropTargetAt(at).prefix);
+      return;
+    }
+    // Just compressed: switch to the new archive, then grow it.
+    globalError = null;
+    try {
+      await openArchive(archive, await inspectPath(archive));
+    } catch (err: unknown) {
+      globalError = (err as { message?: string }).message ?? "Failed to open the new archive.";
+      return;
+    }
+    if (!entriesError) await addItemsToArchive(archive, paths, null);
+  }
+
+  async function addItemsToArchive(
+    archive: string,
+    paths: string[],
+    prefix: string | null,
+  ): Promise<void> {
+    globalError = null;
+    const name = baseName(archive);
+    const where = prefix ? ` (in ${prefix}/)` : "";
+    const existing = entries.map((e) => normEntry(e.path));
+    const clashes = paths.map(baseName).filter((n) => {
+      const target = prefix ? `${prefix}/${n}` : n;
+      return existing.some((e) => e === target || e.startsWith(`${target}/`));
+    });
+
+    const ok =
+      clashes.length > 0
+        ? await confirmDialog(
+            `${clashes.join(", ")} already ${clashes.length === 1 ? "exists" : "exist"} in ${name}${where}. Replace ${clashes.length === 1 ? "it" : "them"}?`,
+            "Replace items?",
+          )
+        : await confirmDialog(
+            `Add ${paths.length} item${paths.length === 1 ? "" : "s"} to ${name}${where}? The archive is rewritten with the new items.`,
+            "Add to archive",
+          );
+    if (!ok) return;
+
+    const jobId = crypto.randomUUID();
+    handleRunning(jobId);
+    try {
+      await addToArchive(
+        jobId,
+        archive,
+        paths,
+        { prefix, replace: clashes.length > 0, acceleration },
+        handleProgress,
+      );
+      run = null;
+      latestProgress = null;
+      archiveInspect = await inspectPath(archive);
+      entries = await listEntries(archive);
+    } catch (err: unknown) {
+      const e = err as IpcError;
+      if (e.kind === "cancelled") handleCancel();
+      else handleError(e);
+    }
+  }
+
+  async function handleDragOut(keys: string[]): Promise<void> {
+    if (!archivePath || dragOutCount > 0 || run) return;
+    globalError = null;
+    dragOutCount = keys.length;
+    try {
+      await dragOut(crypto.randomUUID(), archivePath, keys);
+    } catch (err: unknown) {
+      globalError = (err as { message?: string }).message ?? "Failed to drag the items out.";
+    } finally {
+      dragOutCount = 0;
+    }
+  }
+
+  const dropLabel = $derived.by(() => {
+    if (!fileDrag) return null;
+    const archive = dropArchive();
+    if (!archive) return null;
+    const into = fileDrag.prefix ? ` › ${fileDrag.prefix}/` : "";
+    return `Drop to add to ${baseName(archive)}${into}`;
+  });
 
   // -------------------------------------------------------------------------
   // Routing: decide open vs compose from a set of incoming paths.
@@ -372,8 +516,28 @@
   }
 
   onMount(async () => {
-    unlistenDrop = await onFileDrop((paths) => {
-      void routePaths(paths);
+    try {
+      stagingRoot = await dragStagingRoot();
+    } catch {
+      // Drag-out is unavailable on this platform; nothing to filter.
+    }
+
+    unlistenDrop = await onFileDrag({
+      enter: (paths, at) => {
+        if (isOwnDragOut(paths) || !dropArchive()) return;
+        fileDrag = dropTargetAt(at);
+      },
+      over: (at) => {
+        if (fileDrag) fileDrag = dropTargetAt(at);
+      },
+      leave: () => {
+        fileDrag = null;
+      },
+      drop: (paths, at) => {
+        fileDrag = null;
+        if (isOwnDragOut(paths)) return;
+        void handleDrop(paths, at);
+      },
     });
 
     // Subscribe to live OS "open with" deliveries BEFORE draining the startup
@@ -416,6 +580,12 @@
     onOpenSettings={() => (showSettings = true)}
     onOpenChangelog={() => (showChangelog = true)}
   />
+
+  {#if dragOutCount > 0}
+    <div class="info-banner" role="status">
+      Preparing {dragOutCount} item{dragOutCount === 1 ? "" : "s"} to drag out…
+    </div>
+  {/if}
 
   {#if globalError}
     <div class="error-banner">
@@ -470,6 +640,9 @@
         footerStats={openFooterStats}
         searchQuery={searchQuery}
         onSearchChange={(q) => (searchQuery = q)}
+        onDragOut={(keys) => void handleDragOut(keys)}
+        {dropLabel}
+        dropTargetKey={fileDrag?.key ?? null}
       />
     </div>
   {:else}
@@ -484,6 +657,7 @@
           emptyMessage={listEmpty}
           onRemove={mode === "compose" ? removeItem : undefined}
           onAddFiles={mode === "compose" ? handleAddFiles : undefined}
+          {dropLabel}
         />
       </section>
 
@@ -531,6 +705,14 @@
     padding: 0.6rem 1.2rem;
     color: var(--danger-banner-fg);
     font-size: 0.9rem;
+  }
+
+  .info-banner {
+    background: var(--accent-subtle-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 1.2rem;
+    color: var(--accent-subtle-fg);
+    font-size: 0.85rem;
   }
 
   .error-dismiss {
