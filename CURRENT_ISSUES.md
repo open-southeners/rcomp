@@ -5,6 +5,23 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `apps/rcomp-desktop` — drag & drop editing (M1 of the 2026-10-11 plan)
+  **What:** Built and type-checked, core/backend covered by tests, but the
+  interactive pieces were never exercised with a real mouse: (a) `drag_out`
+  starts the native drag *after* extracting the selection, so it relies on the
+  mouse button still being held when `drag::start_drag` runs — a quick
+  click-drag-release on a large selection may start a drag that follows the
+  cursor until the next click; (b) `onFileDrag` divides the drop position by
+  `devicePixelRatio` to reach CSS pixels — if Tauri already reports logical
+  positions on some platform, the folder-row targeting will be off by the
+  scale factor; (c) a drag-out that ends back over the window is filtered by
+  the staging-root path prefix.
+  **Fix:** Manual pass on macOS, Windows and Linux: drag one file / a folder /
+  a multi-selection out to the desktop; drop files on the root, on a folder
+  row, on a file row (→ its parent); replace-clash prompt; cancel mid-add;
+  drop after compressing. If (a) bites, move to macOS file promises
+  (`NSFilePromiseProvider`) — see PLAN_EXTRAS.
+
 - **Where:** Release notes / README + `.github/workflows/release.yml` (`desktop` job)
   **What:** The desktop bundles built and attached by the new tag-triggered
   `desktop` job are built with the default `rar` feature on, so they link the

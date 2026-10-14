@@ -31,6 +31,18 @@ cargo install rcomp
 `rcomp` and `rcomp-core` are published to crates.io automatically when a GitHub
 release is tagged. See [RELEASING.md](RELEASING.md) for the release runbook.
 
+## Desktop app
+
+Open an archive to browse its contents, or drop files and folders on the
+window to bundle them into a new one. While an archive is open:
+
+- **Drag entries out** of the list to extract just those items wherever you
+  drop them. Select several with ⌘/Ctrl-click or Shift-click.
+- **Drop files or folders in** to add them to the archive, either at the root
+  or into the folder row under the cursor. The archive is rebuilt and swapped
+  in once complete, so large archives take a moment. RAR archives and single
+  compressed files (`notes.txt.gz`) can't be added to.
+
 ## Usage
 
 ```

@@ -27,12 +27,15 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pulldown-cmark = "0.13"
+tempfile = { workspace = true }
 rcomp-core = { path = "../../../crates/rcomp-core", default-features = false, features = ["serde"] }
 
 # Desktop-only: forward a second launch's argv (the "Open with" file path on
 # Windows/Linux) to the already-running instance instead of opening a new window.
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"
+# Native drag sessions, so archive entries can be dragged out to the file manager.
+drag = "2"
 rcomp-wgpu = { path = "../../../crates/rcomp-wgpu", version = "0.3.3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -43,6 +46,3 @@ default = ["rar"]
 rar = ["rcomp-core/rar"]
 metal = ["dep:rcomp-metal"]
 wgpu = ["dep:rcomp-wgpu"]
-
-[dev-dependencies]
-tempfile = { workspace = true }
