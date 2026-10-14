@@ -372,7 +372,10 @@ pub(crate) fn extract(
         if is_dir && is_root_entry(raw_path) {
             continue;
         }
-        let out_path = sanitize_entry_path(dest, raw_path)?;
+        let Some(rel_path) = ctx.selection.map(raw_path) else {
+            continue;
+        };
+        let out_path = sanitize_entry_path(dest, &rel_path)?;
 
         ctx.set_entry(&raw_name);
         ctx.check_cancel()?;
@@ -521,6 +524,7 @@ mod tests {
         ($token:expr, $cb:expr) => {
             OpCtx {
                 cancel: $token.clone(),
+                selection: Default::default(),
                 on_progress: $cb,
                 progress: Progress {
                     bytes_done: 0,

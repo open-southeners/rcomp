@@ -367,7 +367,10 @@ pub(crate) fn extract(
         if is_root_entry(raw_path) {
             continue;
         }
-        let out_path = sanitize_entry_path(dest, raw_path)?;
+        let Some(rel_path) = ctx.selection.map(raw_path) else {
+            continue;
+        };
+        let out_path = sanitize_entry_path(dest, &rel_path)?;
         ctx.set_entry(raw_name);
         ctx.check_cancel()?;
         prepare_dir(dest, &out_path)?;
@@ -378,6 +381,7 @@ pub(crate) fn extract(
     // We capture ctx fields we need inside the closure via copies/clones that
     // don't require mutable borrow aliasing.
     let cancel_token = ctx.cancel.clone();
+    let selection = ctx.selection.clone();
     let dest_path = dest.to_path_buf();
 
     // Error and count tracking returned out of the closure.
@@ -401,7 +405,21 @@ pub(crate) fn extract(
 
             let raw_name = entry.name();
             let raw_path = Path::new(raw_name);
-            let out_path = match sanitize_entry_path(&dest_path, raw_path) {
+            let Some(rel_path) = selection.map(raw_path) else {
+                // Entries in a solid block share one decoder stream, and the
+                // library does not skip an unread entry for us: drain it so
+                // the next entry starts at its own bytes.
+                if cancel_token.is_cancelled() {
+                    file_error = Some(Error::Cancelled);
+                    return Ok(false);
+                }
+                if let Err(e) = io::copy(reader, &mut io::sink()) {
+                    file_error = Some(Error::Io(e));
+                    return Ok(false);
+                }
+                return Ok(true);
+            };
+            let out_path = match sanitize_entry_path(&dest_path, &rel_path) {
                 Ok(p) => p,
                 Err(e) => {
                     file_error = Some(e);
@@ -532,6 +550,7 @@ mod tests {
         ($token:expr, $cb:expr) => {
             OpCtx {
                 cancel: $token.clone(),
+                selection: Default::default(),
                 on_progress: $cb,
                 progress: Progress {
                     bytes_done: 0,

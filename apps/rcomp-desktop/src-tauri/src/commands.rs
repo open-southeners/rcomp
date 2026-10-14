@@ -399,6 +399,7 @@ fn extract_options(
         verify_sha256: opts.verify_sha256,
         verify_content_sha256: opts.verify_content_sha256,
         acceleration: opts.acceleration,
+        entries: Vec::new(),
     }
 }
 

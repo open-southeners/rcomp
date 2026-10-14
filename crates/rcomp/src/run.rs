@@ -363,6 +363,7 @@ fn cmd_extract(input: &Path, dest: &Path, cli: &Cli, cancel: CancelToken) -> any
         verify_sha256,
         verify_content_sha256,
         acceleration: cli.accelerator,
+        entries: Vec::new(),
     };
 
     let mut prog = ui::build(cli.quiet);
