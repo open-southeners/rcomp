@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creating an archive are added to that new archive. Adding works for zip, 7z,
   tar and compressed tarballs (the archive is rebuilt and swapped in only once
   complete); RAR archives and single compressed files are read-only.
+- **"Compress with Rcomp" and "Decompress with Rcomp"** in the file manager's
+  context menu: as Finder Quick Actions on macOS, as Explorer menu items
+  registered by the Windows installers, and for Dolphin, Nemo and Nautilus
+  (with `python3-nautilus` installed) from the Linux `.deb`/`.rpm` packages.
+  Decompress extracts each archive next to itself (into a folder when it has
+  several top-level items); Compress bundles the selection into a new archive
+  beside it with the default format and never overwrites an existing file. The
+  desktop app accepts the same actions as `--compress <paths…>` and
+  `--decompress <paths…>` launch flags.
 - `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
   entry paths as returned by `list`, and writes each selected file or folder
   directly into the destination under its own name.

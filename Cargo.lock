@@ -3596,6 +3596,9 @@ name = "rcomp-desktop"
 version = "0.3.3"
 dependencies = [
  "drag",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "pulldown-cmark",
  "rcomp-core",
  "rcomp-metal",

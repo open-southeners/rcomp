@@ -7,6 +7,8 @@ pub mod job;
 pub mod menu;
 pub mod open_files;
 pub mod progress;
+#[cfg(target_os = "macos")]
+pub mod services;
 
 use tauri::Manager as _;
 
@@ -58,8 +60,9 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let base = std::path::PathBuf::from(&cwd);
-            let paths = open_files::existing_paths(argv.into_iter().skip(1), &base);
-            open_files::deliver(app, paths);
+            for request in open_files::requests_from_args(argv.into_iter().skip(1), &base) {
+                open_files::deliver(app, request);
+            }
         }));
     }
 
@@ -86,9 +89,16 @@ pub fn run() {
             drag_out::drag_out,
             #[cfg(desktop)]
             drag_out::drag_staging_root,
-            open_files::get_launch_paths,
+            open_files::get_launch_requests,
             changelog::get_changelog,
         ])
+        // Finder Quick Actions: register the NSServices provider while still
+        // launching, so a service request that started the app is not lost.
+        .setup(|_app| {
+            #[cfg(target_os = "macos")]
+            services::register(_app.handle());
+            Ok(())
+        })
         // Cancel all in-flight jobs when the last window requests close.
         // `cancel_all` trips every registered CancelToken; worker threads call
         // `reg.finish(id)` as they unwind, removing their entries.
@@ -111,9 +121,8 @@ pub fn run() {
     #[cfg(desktop)]
     {
         if let Ok(cwd) = std::env::current_dir() {
-            let paths = open_files::existing_paths(std::env::args().skip(1), &cwd);
-            if !paths.is_empty() {
-                app.state::<open_files::OpenPaths>().push(paths);
+            for request in open_files::requests_from_args(std::env::args().skip(1), &cwd) {
+                app.state::<open_files::OpenPaths>().push(request);
             }
         }
     }
@@ -126,7 +135,13 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Opened { urls } = _event {
             let paths = open_files::paths_from_urls(urls);
-            open_files::deliver(_app_handle, paths);
+            open_files::deliver(
+                _app_handle,
+                open_files::LaunchRequest {
+                    action: open_files::LaunchAction::Open,
+                    paths,
+                },
+            );
         }
     });
 }

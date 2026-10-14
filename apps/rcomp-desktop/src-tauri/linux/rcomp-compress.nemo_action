@@ -1,0 +1,7 @@
+[Nemo Action]
+Name=Compress with Rcomp
+Comment=Bundle the selected items into a new archive
+Exec=Rcomp --compress %F
+Icon-Name=Rcomp
+Selection=notnone
+Extensions=any;
