@@ -55,7 +55,7 @@ use tempfile::{Builder as TempFileBuilder, TempPath};
 use crate::{
     AccelerationPreference, BlockEncoderSession, Codec, Container, Direction, Error, Format, Level,
     ProcessingBackend, ProviderRegistry, Result, acceleration,
-    archive::{OpCtx, sevenz, tar, zip},
+    archive::{OpCtx, Selection, sevenz, tar, zip},
     codec::{Encoder, lz4_accelerated, new_decoder, new_encoder},
     detect::{detect, detect_from_extension},
     hash::{HashingReader, HashingWriter, finalize_shared, hex_digest},
@@ -279,6 +279,16 @@ pub struct ExtractOptions {
     pub verify_content_sha256: Option<String>,
     /// Hardware-acceleration preference. Defaults to explicit CPU operation.
     pub acceleration: AccelerationPreference,
+    /// Extract only these entries, as reported by [`list`].  Empty (the
+    /// default) extracts the whole archive at its stored layout.
+    ///
+    /// Each selected entry is written directly into `dest` under its own
+    /// name, and a selected directory brings its whole subtree: selecting
+    /// `docs/guide/` writes `dest/guide/…`.  Leading `./` components and
+    /// trailing separators are ignored when matching.  A hard link whose
+    /// target was not selected is skipped.  Single-stream (codec-only) inputs
+    /// hold one file and ignore this option.
+    pub entries: Vec<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +507,7 @@ fn run_compress(
 
     let mut ctx = OpCtx {
         cancel: opts.cancel.clone(),
+        selection: Default::default(),
         on_progress: &mut on_progress,
         progress,
     };
@@ -1079,6 +1090,7 @@ fn run_extract(
 
     let mut ctx = OpCtx {
         cancel: opts.cancel.clone(),
+        selection: Selection::new(&opts.entries),
         on_progress: &mut on_progress,
         progress,
     };

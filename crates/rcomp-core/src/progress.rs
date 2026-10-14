@@ -280,6 +280,7 @@ mod tests {
         let mut progress_calls: u64 = 0;
         let mut ctx = OpCtx {
             cancel: token,
+            selection: Default::default(),
             on_progress: &mut |_p| {
                 progress_calls += 1;
             },
@@ -316,6 +317,7 @@ mod tests {
         let mut bytes_reported: u64 = 0;
         let mut ctx = OpCtx {
             cancel: token,
+            selection: Default::default(),
             on_progress: &mut |p| {
                 bytes_reported = p.bytes_done;
             },

@@ -123,8 +123,13 @@ pub(crate) fn extract(
             continue;
         }
 
-        // Sanitize the raw path first.
-        let out_path = sanitize_entry_path(dest, &raw_filename)?;
+        let Some(rel_path) = ctx.selection.map(&raw_filename) else {
+            open = header.skip().map_err(|e| io::Error::other(e.to_string()))?;
+            continue;
+        };
+
+        // Sanitize the (possibly re-rooted) raw path first.
+        let out_path = sanitize_entry_path(dest, &rel_path)?;
 
         let entry_name = raw_filename.to_string_lossy().into_owned();
         ctx.set_entry(&entry_name);
@@ -222,6 +227,7 @@ mod tests {
         ($token:expr, $cb:expr) => {
             OpCtx {
                 cancel: $token.clone(),
+                selection: Default::default(),
                 on_progress: $cb,
                 progress: Progress {
                     bytes_done: 0,
@@ -363,6 +369,7 @@ mod tests {
         let mut snapshots: Vec<Progress> = Vec::new();
         let mut ctx = OpCtx {
             cancel: token.clone(),
+            selection: Default::default(),
             on_progress: &mut |p: &Progress| {
                 snapshots.push(p.clone());
             },

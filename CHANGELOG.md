@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
+  entry paths as returned by `list`, and writes each selected file or folder
+  directly into the destination under its own name.
 - Added shared hardware-acceleration selection for the core, CLI, and desktop
   app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop
   users can choose Automatic, CPU only, or Require GPU in Settings. Automatic
@@ -57,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ExtractOptions` has a new public `entries` field. Code that builds it with
+  a struct literal must add `..Default::default()` (as the docs recommend).
 - Accelerated compression now writes to a synchronized temporary sibling and
   atomically publishes the completed artifact. Cancellation or provider
   failure removes staging data while preserving any existing destination.

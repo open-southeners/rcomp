@@ -307,7 +307,10 @@ pub(crate) fn extract<'r>(
         if entry.header().entry_type().is_dir() && is_root_entry(&raw_path) {
             continue;
         }
-        let out_path = sanitize_entry_path(dest, &raw_path)?;
+        let Some(rel_path) = ctx.selection.map(&raw_path) else {
+            continue;
+        };
+        let out_path = sanitize_entry_path(dest, &rel_path)?;
 
         let entry_name = raw_path.to_string_lossy().into_owned();
         ctx.set_entry(&entry_name);
@@ -381,6 +384,12 @@ pub(crate) fn extract<'r>(
                 .into_owned();
 
             // Hard link targets in tar are always relative to the archive root.
+            // In a partial extraction the target is re-rooted like any other
+            // entry; a link to an unselected entry has nothing to point at
+            // and is skipped.
+            let Some(link_target) = ctx.selection.map(&link_target) else {
+                continue;
+            };
             let target_path = sanitize_entry_path(dest, &link_target)?;
             // `link(2)` follows a symlink target on some platforms (macOS), so
             // the target must be reachable without any symlink.
@@ -542,6 +551,7 @@ mod tests {
         ($token:expr, $cb:expr) => {
             OpCtx {
                 cancel: $token.clone(),
+                selection: Default::default(),
                 on_progress: $cb,
                 progress: Progress {
                     bytes_done: 0,

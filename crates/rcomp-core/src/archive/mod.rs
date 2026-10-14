@@ -11,6 +11,8 @@
 //!   caller's `on_progress` callback, and the live [`Progress`] snapshot.
 //!   All backend functions receive `&mut OpCtx` so that progress and
 //!   cancellation are uniformly handled in one place.
+//! - **[`select`]** — the partial-extraction [`Selection`] that extract
+//!   backends consult to skip unselected entries and re-root selected ones.
 //! - **[`sanitize`]** — validates archive entry paths and symlink targets
 //!   against path-traversal (zip-slip) attacks before anything is written to
 //!   disk.
@@ -25,7 +27,10 @@ use crate::{
     progress::{CancelToken, Progress},
 };
 
+pub(crate) use select::Selection;
+
 pub(crate) mod sanitize;
+pub(crate) mod select;
 pub(crate) mod sevenz;
 pub(crate) mod tar;
 pub(crate) mod zip;
@@ -45,6 +50,9 @@ pub(crate) mod rar;
 pub(crate) struct OpCtx<'a> {
     /// Cancellation signal.  Check via [`OpCtx::check_cancel`].
     pub cancel: CancelToken,
+    /// Which entries an extraction writes (everything by default).  Ignored
+    /// by archive creation.
+    pub selection: Selection,
     /// Callback invoked after every [`add_bytes`](OpCtx::add_bytes) or
     /// [`set_entry`](OpCtx::set_entry) mutation.
     pub on_progress: &'a mut dyn FnMut(&Progress),
