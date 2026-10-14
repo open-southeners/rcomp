@@ -42,7 +42,7 @@ rcomp-wgpu = { path = "../../../crates/rcomp-wgpu", version = "0.4.0", optional 
 # Finder Quick Actions: the NSServices provider object (same versions Tauri uses).
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSPasteboard", "NSPasteboardItem"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL"] }
 rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.4.0", optional = true }
 
 [features]

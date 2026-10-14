@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop app on macOS: **Compress with Rcomp** and **Decompress with Rcomp**
+  from Finder's Quick Actions now receive the selected files. Previously the
+  app opened (or came to the front) but ignored the selection.
+
 ## [0.4.0] - 2026-10-14
 
 ### Added
