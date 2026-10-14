@@ -61,6 +61,9 @@ Apple M3 Max measurements, the portable/native comparison, and the Windows
 Direct3D 12 qualification on NVIDIA and AMD are recorded in
 [`BENCHMARKS.md`](./BENCHMARKS.md).
 
+The step-by-step Ubuntu/Intel NUC qualification procedure and result handback
+template are in [`LINUX_INTEL_HANDOVER.md`](./LINUX_INTEL_HANDOVER.md).
+
 Do not promote the provider to automatic selection until the Windows/DX12,
 Linux/Vulkan, and Apple Silicon/Metal correctness and crossover matrices are
 complete. Native `rcomp-metal` remains the Apple performance reference during
