@@ -65,7 +65,11 @@ sed "s/__VERSION__/$version/g" "$here/extension/Info.plist" > "$appex/Contents/I
 
 identity="${APPLE_SIGNING_IDENTITY:-}"
 keychain=""
+search_list=()
 cleanup() {
+  if [[ ${#search_list[@]} -gt 0 ]]; then
+    security list-keychains -d user -s "${search_list[@]}" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$keychain" ]]; then security delete-keychain "$keychain" >/dev/null 2>&1 || true; fi
   rm -f "$out/certificate.p12"
 }
@@ -81,6 +85,15 @@ if [[ -z "$identity" && -n "${APPLE_CERTIFICATE:-}" ]]; then
   security import "$out/certificate.p12" -k "$keychain" \
     -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign >/dev/null
   security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+  # codesign resolves identities through the user's keychain search list;
+  # `--keychain` alone is not honoured in headless CI sessions ("no identity
+  # found"). Prepend ours, as Tauri does for the app, and restore on exit.
+  while IFS= read -r kc; do
+    kc="${kc#"${kc%%[![:space:]]*}"}"
+    kc="${kc#\"}"
+    search_list+=("${kc%\"}")
+  done < <(security list-keychains -d user)
+  security list-keychains -d user -s "$keychain" "${search_list[@]}"
   identity="$(security find-identity -v -p codesigning "$keychain" \
     | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) .*/\1/p' | head -1)"
   if [[ -z "$identity" ]]; then
@@ -96,5 +109,9 @@ if [[ -n "$identity" ]]; then
 else
   sign_args+=(--sign -)
 fi
-codesign "${sign_args[@]}" "$appex"
+if ! codesign "${sign_args[@]}" "$appex"; then
+  echo "quicklook: signing failed; code-signing identities visible to codesign:" >&2
+  security find-identity -v -p codesigning >&2 || true
+  exit 1
+fi
 echo "quicklook: built $appex (${archs[*]})"
