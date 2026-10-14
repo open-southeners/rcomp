@@ -25,6 +25,16 @@ export interface Entry {
   is_dir: boolean;
 }
 
+/**
+ * A request from the OS: open files ("Open with"), or a file-manager context
+ * menu action ("Compress with Rcomp" / "Decompress with Rcomp").
+ */
+export interface LaunchRequest {
+  action: "open" | "compress" | "decompress";
+  /** Existing absolute paths; never empty. */
+  paths: string[];
+}
+
 /** Wrap-folder decision returned by `wrap_info`. */
 export interface WrapInfo {
   /** Number of distinct top-level roots in the archive. */

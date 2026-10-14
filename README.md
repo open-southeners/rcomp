@@ -43,6 +43,15 @@ window to bundle them into a new one. While an archive is open:
   in once complete, so large archives take a moment. RAR archives and single
   compressed files (`notes.txt.gz`) can't be added to.
 
+**File-manager integration.** Right-click files to get **Compress with Rcomp**
+or, on archives, **Decompress with Rcomp**:
+
+| Platform | Where it appears |
+|---|---|
+| macOS | Finder → Quick Actions (enable or reorder them in System Settings → Keyboard → Keyboard Shortcuts → Services) |
+| Windows | Explorer context menu (on Windows 11, under *Show more options*), installed by both the `.exe` and `.msi` installers |
+| Linux | Dolphin, Nemo, and Nautilus (needs `python3-nautilus`), installed by the `.deb` and `.rpm` packages; not available for the AppImage |
+
 ## Usage
 
 ```

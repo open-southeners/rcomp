@@ -20,23 +20,25 @@ import type {
   CompressOpts,
   ExtractOpts,
   AddOpts,
+  LaunchRequest,
 } from "./types";
 
 /**
- * Drain the file paths the app was launched with (OS "open with" / argv) and
- * mark the frontend ready for live `open-paths` events.  Call once on startup.
+ * Drain the requests the app was launched with (OS "open with", context-menu
+ * actions, argv) and mark the frontend ready for live `launch-request`
+ * events.  Call once on startup.
  */
-export async function getLaunchPaths(): Promise<string[]> {
-  return invoke<string[]>("get_launch_paths");
+export async function getLaunchRequests(): Promise<LaunchRequest[]> {
+  return invoke<LaunchRequest[]>("get_launch_requests");
 }
 
 /**
- * Subscribe to file paths delivered by the OS while the app is running
- * (macOS `Opened` events and Windows/Linux second-launch argv forwarding).
- * Returns the unlisten function.
+ * Subscribe to requests delivered by the OS while the app is running (macOS
+ * `Opened` events and Finder Quick Actions, Windows/Linux second-launch argv
+ * forwarding).  Returns the unlisten function.
  */
-export function onOpenPaths(cb: (paths: string[]) => void): Promise<UnlistenFn> {
-  return listen<string[]>("open-paths", (event) => cb(event.payload));
+export function onLaunchRequest(cb: (req: LaunchRequest) => void): Promise<UnlistenFn> {
+  return listen<LaunchRequest>("launch-request", (event) => cb(event.payload));
 }
 
 /**

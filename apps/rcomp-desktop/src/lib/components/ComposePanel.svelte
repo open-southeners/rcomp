@@ -8,9 +8,9 @@
    * path, and the bundle-into-one-archive action via `compress_many`. Adding
    * and removing items is delegated to the parent workspace.
    */
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { pickSavePath, confirmDialog, warningDialog } from "../dialogs";
-  import { compressMany, writeSidecar, onMenuCompress } from "../ipc";
+  import { compressMany, writeSidecar, onMenuCompress, inspectPath } from "../ipc";
   import {
     CODECS,
     CONTAINERS,
@@ -35,9 +35,25 @@
     onProgress: (e: ProgressEvent) => void;
     onDone: (report: Report, dest: string) => void;
     onError: (err: IpcError) => void;
+    /** Changing this to a new non-zero value compresses once with the default
+     *  settings into a fresh (never overwritten) file next to the first item
+     *  (used by the "Compress with Rcomp" context-menu action). */
+    autoRun?: number;
   }
 
-  let { items, defaultFormatPref, acceleration, onRunning, onProgress, onDone, onError }: Props = $props();
+  let {
+    items,
+    defaultFormatPref,
+    acceleration,
+    onRunning,
+    onProgress,
+    onDone,
+    onError,
+    autoRun = 0,
+  }: Props = $props();
+  // Only requests made after mounting count: a remount must not replay an
+  // action that already ran.
+  let lastAutoRun = untrack(() => autoRun);
 
   let container = $state<ContainerName>("tar");
   let codec = $state<string | null>("zstd");
@@ -92,13 +108,30 @@
     if (!outputTouched) outputPath = defaultOutput();
   });
 
-  function defaultOutput(): string {
+  function defaultOutput(suffix = ""): string {
     const ext = extensionFor(selectedFormat);
     const dir = items.length > 0 ? dirName(items[0].path) : "";
     const stem = items.length === 1 ? items[0].name : "archive";
-    const name = `${stem}${ext}`;
+    const name = `${stem}${suffix}${ext}`;
     return dir ? `${dir}/${name}` : name;
   }
+
+  // An automatic run never overwrites: pick "name 2.zip", "name 3.zip", … the
+  // way Finder's own Compress does.
+  $effect(() => {
+    if (autoRun === 0 || autoRun === lastAutoRun || items.length === 0) return;
+    lastAutoRun = autoRun;
+    void (async () => {
+      if (!outputTouched) {
+        let candidate = defaultOutput();
+        for (let n = 2; (await inspectPath(candidate)).exists; n++) {
+          candidate = defaultOutput(` ${n}`);
+        }
+        outputPath = candidate;
+      }
+      await handleCompress();
+    })();
+  });
 
   function parseExclude(text: string): string[] {
     return text

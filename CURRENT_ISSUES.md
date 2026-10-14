@@ -22,6 +22,21 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   drop after compressing. If (a) bites, move to macOS file promises
   (`NSFilePromiseProvider`) — see PLAN_EXTRAS.
 
+- **Where:** `apps/rcomp-desktop/src-tauri/{windows,linux}/` — context menus (M2)
+  **What:** The macOS Quick Actions were verified end to end on a bundled
+  debug build (`NSPerformService` → compress, decompress with wrap folder;
+  argv `--compress` launches batched into one archive via single-instance).
+  The Windows NSIS hook / WiX fragment and the Linux Dolphin / Nemo /
+  Nautilus files were written but never installed: unverified that (a) Tauri's
+  NSIS template defines `MAINBINARYNAME` and the WiX template's `INSTALLDIR`
+  as assumed, (b) the Linux packages install the binary as `/usr/bin/Rcomp`
+  and the icon as `Rcomp` (used in `Exec=`/`Icon=`), (c) Explorer's per-item
+  launches arrive within the 400 ms batching window.
+  **Fix:** Install each CI bundle once (`.exe`, `.msi`, `.deb`, `.rpm`), check
+  the menu items appear and work for one and several items, and that
+  uninstalling removes them. The AppImage ships no integration (it installs
+  nothing system-wide).
+
 - **Where:** Release notes / README + `.github/workflows/release.yml` (`desktop` job)
   **What:** The desktop bundles built and attached by the new tag-triggered
   `desktop` job are built with the default `rar` feature on, so they link the

@@ -65,6 +65,49 @@
         "rank": "Alternate",
         "mimeType": "application/zip;application/x-7z-compressed;application/vnd.rar;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/zstd;application/x-lz4"
       }
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/context-menu.nsh"
+      },
+      "wix": {
+        "fragmentPaths": [
+          "windows/context-menu.wxs"
+        ],
+        "componentGroupRefs": [
+          "RcompContextMenu"
+        ]
+      }
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/kio/servicemenus/rcomp-compress.desktop": "linux/dolphin-rcomp-compress.desktop",
+          "/usr/share/kio/servicemenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
+          "/usr/share/kservices5/ServiceMenus/rcomp-compress.desktop": "linux/dolphin-rcomp-compress.desktop",
+          "/usr/share/kservices5/ServiceMenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
+          "/usr/share/nemo/actions/rcomp-compress.nemo_action": "linux/rcomp-compress.nemo_action",
+          "/usr/share/nemo/actions/rcomp-decompress.nemo_action": "linux/rcomp-decompress.nemo_action",
+          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py"
+        },
+        "recommends": [
+          "python3-nautilus"
+        ]
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/kio/servicemenus/rcomp-compress.desktop": "linux/dolphin-rcomp-compress.desktop",
+          "/usr/share/kio/servicemenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
+          "/usr/share/kservices5/ServiceMenus/rcomp-compress.desktop": "linux/dolphin-rcomp-compress.desktop",
+          "/usr/share/kservices5/ServiceMenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
+          "/usr/share/nemo/actions/rcomp-compress.nemo_action": "linux/rcomp-compress.nemo_action",
+          "/usr/share/nemo/actions/rcomp-decompress.nemo_action": "linux/rcomp-decompress.nemo_action",
+          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py"
+        },
+        "recommends": [
+          "nautilus-python"
+        ]
+      }
+    }
   }
 }

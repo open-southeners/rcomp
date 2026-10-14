@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged by Tauri into the bundle's generated Info.plist (macOS only).
+
+  NSServices: Finder Quick Actions. Each entry sends `NSMessage` to the
+  provider registered in src/services.rs with the selected files on a
+  pasteboard. NSRequiredContext makes them enabled by default.
+
+  UTImportedTypeDeclarations: macOS has no system type for .lz4, so declare
+  one that conforms to public.archive and the "Decompress" action (and the
+  Quick Look preview) can match it like every other archive.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Compress with Rcomp</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>compressFiles</string>
+      <key>NSPortName</key>
+      <string>Rcomp</string>
+      <key>NSRequiredContext</key>
+      <dict/>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.item</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Decompress with Rcomp</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>decompressFiles</string>
+      <key>NSPortName</key>
+      <string>Rcomp</string>
+      <key>NSRequiredContext</key>
+      <dict/>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.archive</string>
+        <string>org.lz4.lz4-archive</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>org.lz4.lz4-archive</string>
+      <key>UTTypeDescription</key>
+      <string>LZ4 compressed file</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.archive</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>lz4</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>application/x-lz4</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

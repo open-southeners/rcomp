@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Explorer context menu for the MSI installer: "Compress with Rcomp" on every
+  file and folder, "Decompress with Rcomp" on supported archives. Referenced
+  from tauri.conf.json (`bundle.windows.wix.fragmentPaths` /
+  `componentGroupRefs`); the MSI installs per machine, so the verbs live under
+  HKLM and are removed with the product.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <ComponentGroup Id="RcompContextMenu">
+      <Component Id="RcompContextMenuVerbs" Directory="INSTALLDIR" Guid="*">
+        <RegistryKey Root="HKLM" Key="Software\Classes\*\shell\RcompCompress">
+          <RegistryValue Type="string" Value="Compress with Rcomp" KeyPath="yes" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --compress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\Directory\shell\RcompCompress">
+          <RegistryValue Type="string" Value="Compress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --compress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.zip\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.7z\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.rar\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tar\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.gz\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tgz\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.bz2\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tbz2\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.xz\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.txz\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.zst\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.tzst\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.lz4\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.br\shell\RcompDecompress">
+          <RegistryValue Type="string" Value="Decompress with Rcomp" />
+          <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot;,0" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Player" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Rcomp.exe&quot; --decompress &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

@@ -8,7 +8,7 @@
    * bar above the list instead. Mirrors the CLI's wrap behaviour automatically
    * (see rcomp-core's silent-tar / wrap-folder rule) via `wrap_info`.
    */
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { pickFolder, confirmDialog } from "../dialogs";
   import { extract, wrapInfo, readSidecar, onMenuExtractNow } from "../ipc";
   import type {
@@ -34,14 +34,33 @@
     /** Called when an in-flight run should return to idle without a result
      *  (the user declined an overwrite prompt, or the job was cancelled). */
     onIdle: () => void;
+    /** Changing this to a new non-zero value extracts once with the current
+     *  settings, as soon as the archive's details have loaded (used by the
+     *  "Decompress with Rcomp" context-menu action). */
+    autoRun?: number;
   }
 
-  let { inputPath, inspect, entries, acceleration, onRunning, onProgress, onDone, onError, onIdle }: Props =
-    $props();
+  let {
+    inputPath,
+    inspect,
+    entries,
+    acceleration,
+    onRunning,
+    onProgress,
+    onDone,
+    onError,
+    onIdle,
+    autoRun = 0,
+  }: Props = $props();
 
   let wrapData = $state<WrapInfo | null>(null);
   let sidecar = $state<SidecarData | null>(null);
+  /** Whether `wrapData` / `sidecar` have settled for the current archive. */
+  let detailsLoaded = $state(false);
   let busy = $state(false);
+  // Only requests made after mounting count: a remount (e.g. after closing
+  // Settings) must not replay an action that already ran.
+  let lastAutoRun = untrack(() => autoRun);
 
   let unlistenMenu: (() => void) | null = null;
 
@@ -74,6 +93,7 @@
     const path = inputPath;
     wrapData = null;
     sidecar = null;
+    detailsLoaded = false;
     Promise.all([wrapInfo(path), readSidecar(path)])
       .then(([w, s]) => {
         wrapData = w;
@@ -81,7 +101,19 @@
       })
       .catch(() => {
         // Non-fatal; wrapData / sidecar stay null.
+      })
+      .finally(() => {
+        if (path === inputPath) detailsLoaded = true;
       });
+  });
+
+  // Wait for the wrap-folder decision so an automatic run lands exactly where
+  // a manual "Extract Now" would.
+  $effect(() => {
+    if (autoRun !== 0 && autoRun !== lastAutoRun && detailsLoaded) {
+      lastAutoRun = autoRun;
+      void handleExtractNow();
+    }
   });
 
   const hasSidecar = $derived(sidecar !== null && sidecar.artifact_sha256 !== null);
