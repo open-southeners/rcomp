@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "bash quicklook/build.sh"
+  },
+  "bundle": {
+    "macOS": {
+      "files": {
+        "PlugIns/RcompQuickLook.appex": "../quicklook/build/RcompQuickLook.appex"
+      }
+    }
+  }
+}

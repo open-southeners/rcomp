@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist template for RcompQuickLook.appex; build.sh fills in __VERSION__.
+  QLSupportedContentTypes lists the concrete system types macOS assigns to
+  each supported extension (org.lz4.lz4-archive is declared by the app).
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Rcomp Quick Look</string>
+  <key>CFBundleExecutable</key>
+  <string>RcompQuickLook</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.opensoutheners.rcomp.quicklook</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>RcompQuickLook</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionAttributes</key>
+    <dict>
+      <key>QLIsDataBasedPreview</key>
+      <true/>
+      <key>QLSupportsSearchableItems</key>
+      <false/>
+      <key>QLSupportedContentTypes</key>
+      <array>
+        <string>public.zip-archive</string>
+        <string>org.7-zip.7-zip-archive</string>
+        <string>com.rarlab.rar-archive</string>
+        <string>public.tar-archive</string>
+        <string>org.gnu.gnu-tar-archive</string>
+        <string>org.gnu.gnu-zip-archive</string>
+        <string>org.gnu.gnu-zip-tar-archive</string>
+        <string>public.bzip2-archive</string>
+        <string>public.tar-bzip2-archive</string>
+        <string>org.tukaani.xz-archive</string>
+        <string>org.tukaani.tar-xz-archive</string>
+        <string>com.facebook.zst-archive</string>
+        <string>com.facebook.tar-zst-archive</string>
+        <string>com.google.br-archive</string>
+        <string>org.lz4.lz4-archive</string>
+      </array>
+    </dict>
+    <key>NSExtensionPointIdentifier</key>
+    <string>com.apple.quicklook.preview</string>
+    <key>NSExtensionPrincipalClass</key>
+    <string>RcompQuickLook.PreviewProvider</string>
+  </dict>
+</dict>
+</plist>

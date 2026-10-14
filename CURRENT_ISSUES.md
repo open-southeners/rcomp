@@ -37,6 +37,19 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   uninstalling removes them. The AppImage ships no integration (it installs
   nothing system-wide).
 
+- **Where:** `apps/rcomp-desktop/quicklook/build.sh` — Quick Look signing (M3)
+  **What:** Verified locally with ad-hoc signing (extension registers, renders
+  `.tar.lz4` previews). The CI path — importing `APPLE_CERTIFICATE` into a
+  throwaway keychain and signing the `.appex` with the Developer ID +
+  hardened runtime before Tauri signs the app — has not run yet; notarization
+  and `codesign --verify --deep --strict` in the bundle job will be the test.
+  Also: BetterZip (and any other archive previewer) can win the per-type
+  preview choice; only `.lz4` was observed to reach our extension on a machine
+  with BetterZip installed.
+  **Fix:** Watch the next macOS bundle job. If notarization rejects the
+  extension, check `codesign -dv --verbose=4` on
+  `Rcomp.app/Contents/PlugIns/RcompQuickLook.appex` in the artifact.
+
 - **Where:** Release notes / README + `.github/workflows/release.yml` (`desktop` job)
   **What:** The desktop bundles built and attached by the new tag-triggered
   `desktop` job are built with the default `rar` feature on, so they link the

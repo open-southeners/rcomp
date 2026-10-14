@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beside it with the default format and never overwrites an existing file. The
   desktop app accepts the same actions as `--compress <paths…>` and
   `--decompress <paths…>` launch flags.
+- **Quick Look preview** for archives on macOS 12 and later: press Space on an
+  archive in Finder to see its item count, uncompressed size and a collapsible
+  folder tree with sizes, with a "Show hidden items" toggle. When another app
+  that previews archives is installed, such as BetterZip, macOS decides which
+  preview is shown.
 - `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
   entry paths as returned by `list`, and writes each selected file or folder
   directly into the destination under its own name.
