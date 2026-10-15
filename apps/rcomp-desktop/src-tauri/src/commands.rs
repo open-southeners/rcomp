@@ -555,7 +555,7 @@ fn sidecar_path_for(path: &Path) -> std::path::PathBuf {
 // `cancel_job`, which just flips a flag, stays synchronous.
 
 /// Run blocking filesystem work off the main thread.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
 ) -> Result<T, IpcError> {
     tauri::async_runtime::spawn_blocking(work)

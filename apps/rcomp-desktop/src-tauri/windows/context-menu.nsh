@@ -6,6 +6,9 @@
 ; per-machine ones). Each selected item launches Rcomp once; the
 ; single-instance plugin folds those launches into the running app, which
 ; batches them into one archive.
+;
+; The uninstall hook also removes the bundled CLI's folder from the user's
+; Path (see src-tauri/src/cli_link.rs).
 
 !macro RCOMP_COMPRESS_VERB ROOT
   WriteRegStr SHCTX "Software\Classes\${ROOT}\shell\RcompCompress" "" "Compress with Rcomp"
@@ -49,6 +52,11 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; Take the bundled `rcomp` CLI off the user's Path if Settings put it there
+  ; (a no-op otherwise). Skipped when an update reinstalls over this copy.
+  ${If} $UpdateMode <> 1
+    ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --unlink-cli'
+  ${EndIf}
   DeleteRegKey SHCTX "Software\Classes\*\shell\RcompCompress"
   DeleteRegKey SHCTX "Software\Classes\Directory\shell\RcompCompress"
   !insertmacro RCOMP_ARCHIVE_EXTENSIONS RCOMP_REMOVE_DECOMPRESS_VERB

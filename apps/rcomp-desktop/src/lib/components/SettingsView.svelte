@@ -11,6 +11,8 @@
   import { FORMATS } from "../formats";
   import type { Appearance } from "../theme";
   import type { AccelerationPreference } from "../preferences";
+  import type { CliLinkStatus, IpcError } from "../types";
+  import { cliLinkStatus, linkCli, unlinkCli } from "../ipc";
 
   interface Props {
     appearance: Appearance;
@@ -39,6 +41,46 @@
     { value: "light", label: "Light" },
     { value: "dark", label: "Dark" },
   ];
+
+  let cli = $state<CliLinkStatus | null>(null);
+  let cliBusy = $state(false);
+  let cliError = $state<string | null>(null);
+
+  $effect(() => {
+    cliLinkStatus()
+      .then((status) => (cli = status))
+      .catch(() => (cli = null));
+  });
+
+  async function toggleCli(link: boolean): Promise<void> {
+    cliBusy = true;
+    cliError = null;
+    try {
+      cli = await (link ? linkCli() : unlinkCli());
+    } catch (err: unknown) {
+      const e = err as IpcError;
+      if (e.kind !== "cancelled") cliError = e.message ?? String(err);
+    } finally {
+      cliBusy = false;
+    }
+  }
+
+  function cliHint(status: CliLinkStatus): string {
+    switch (status.state) {
+      case "managed":
+        return `Installed with the app at ${status.link}.`;
+      case "linked":
+        return status.on_path
+          ? `Available as rcomp in new terminal windows (${status.link}).`
+          : `Copied to ${status.link}, but that folder is not on your PATH yet.`;
+      case "stale":
+        return `${status.link} points to another copy of Rcomp. Relink it to this one.`;
+      case "conflict":
+        return `${status.link} already exists and is not Rcomp's, so it is left alone.`;
+      default:
+        return "Make the rcomp command available in your terminal.";
+    }
+  }
 
   function handleFormatChange(e: Event): void {
     const value = (e.currentTarget as HTMLSelectElement).value;
@@ -98,6 +140,27 @@
       <option value="required">Require GPU</option>
     </select>
   </div>
+
+  {#if cli && cli.state !== "unavailable"}
+    <div class="setting-row">
+      <div class="setting-copy">
+        <span class="setting-label">Command-Line Tool</span>
+        <span class="setting-hint">{cliHint(cli)}</span>
+        {#if cliError}
+          <span class="setting-error">{cliError}</span>
+        {/if}
+      </div>
+      {#if cli.state === "linked"}
+        <button class="btn-secondary" disabled={cliBusy} onclick={() => toggleCli(false)}>
+          Remove from PATH
+        </button>
+      {:else if cli.state === "not-linked" || cli.state === "stale"}
+        <button class="btn-secondary" disabled={cliBusy} onclick={() => toggleCli(true)}>
+          {cli.state === "stale" ? "Relink" : "Add to PATH"}
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -183,6 +246,11 @@
     font-weight: 600;
   }
 
+  .setting-error {
+    font-size: 0.8rem;
+    color: var(--danger);
+  }
+
   .select-input {
     flex-shrink: 0;
     padding: 0.35rem 0.6rem;
@@ -205,7 +273,12 @@
     transition: background 0.12s;
   }
 
-  .btn-secondary:hover {
+  .btn-secondary:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
     background: var(--surface-hover);
   }
 </style>
