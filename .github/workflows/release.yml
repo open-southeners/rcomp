@@ -81,7 +81,9 @@ jobs:
               pick the one matching your platform/architecture, e.g.
               `rcomp-desktop_${{ steps.version.outputs.version }}_macos-universal.dmg`.
             - The **`rcomp` command-line tool** is lowercase and is not shipped
-              as a binary here — install it with `cargo install rcomp`.
+              as a separate binary here. It comes with the desktop app (turn it
+              on under Settings → Command-Line Tool), or install it on its own
+              with `cargo install rcomp`.
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
 
