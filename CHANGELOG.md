@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The `rcomp` command-line tool now ships with the desktop app.** On macOS
+  and Windows, **Settings → Command-Line Tool → Add to PATH** makes it
+  available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS
+  (which may ask for an administrator password), or by adding the app's `bin`
+  folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm`
+  packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to
+  `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew,
+  is never replaced.
+
 ### Fixed
 
 - `--accelerator required` errors now say why the operation could not run: an

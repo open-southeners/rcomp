@@ -45,6 +45,11 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL"] }
 rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.4.0", optional = true }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Adding the bundled CLI's folder to the user's Path (see `cli_link.rs`).
+winreg = "0.55"
+windows-sys = { version = "0.60", features = ["Win32_UI_WindowsAndMessaging"] }
+
 [features]
 default = ["rar"]
 rar = ["rcomp-core/rar"]
