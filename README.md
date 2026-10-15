@@ -56,6 +56,18 @@ or, on archives, **Decompress with Rcomp**:
 contents. If another archive previewer such as BetterZip is installed, macOS
 picks which one is shown.
 
+**Command-line tool included.** The desktop app ships the `rcomp` CLI, so you
+don't need to install it separately:
+
+| Platform | How to get `rcomp` on your PATH |
+|---|---|
+| macOS | **Settings → Command-Line Tool → Add to PATH** links `/usr/local/bin/rcomp` to the copy inside `Rcomp.app` (asks for an administrator password if needed) |
+| Windows | **Settings → Command-Line Tool → Add to PATH** adds the app's `bin` folder to your user `Path`; the `.exe` uninstaller removes it again |
+| Linux | The `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly. From the AppImage, **Add to PATH** copies it to `~/.local/bin/rcomp` |
+
+An existing `rcomp` that the app didn't create (for example from Homebrew) is
+never replaced.
+
 ## Usage
 
 ```

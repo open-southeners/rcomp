@@ -179,3 +179,21 @@ export function humanBytes(n: number): string {
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+/** Whether the bundled `rcomp` command-line tool is on PATH (`cli_link_status`). */
+export interface CliLinkStatus {
+  /**
+   * - `unavailable`: this build has no bundled CLI.
+   * - `managed`: installed on PATH by the Linux package; nothing to toggle.
+   * - `not-linked` / `linked`: whether `rcomp` reaches this app's copy.
+   * - `stale`: linked to another (moved or older) copy of the app.
+   * - `conflict`: another `rcomp` occupies the link path; left alone.
+   */
+  state: "unavailable" | "managed" | "not-linked" | "linked" | "stale" | "conflict";
+  /** The bundled CLI binary. */
+  bundled: string | null;
+  /** The symlink (macOS), copy (Linux AppImage) or PATH folder (Windows). */
+  link: string | null;
+  /** False when the link's folder is not on PATH (Linux `~/.local/bin`). */
+  on_path: boolean;
+}

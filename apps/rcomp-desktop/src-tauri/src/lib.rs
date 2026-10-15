@@ -1,4 +1,5 @@
 pub mod changelog;
+pub mod cli_link;
 pub mod commands;
 #[cfg(desktop)]
 pub mod drag_out;
@@ -42,6 +43,12 @@ fn ensure_display_available() {
 /// handling macOS `Opened` file events.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The Windows uninstaller runs the app with `--unlink-cli` to take the
+    // bundled CLI off PATH; do that without a window or display.
+    if let Some(code) = cli_link::handle_unlink_flag() {
+        std::process::exit(code);
+    }
+
     #[cfg(target_os = "linux")]
     ensure_display_available();
 
@@ -91,6 +98,9 @@ pub fn run() {
             drag_out::drag_staging_root,
             open_files::get_launch_requests,
             changelog::get_changelog,
+            cli_link::cli_link_status,
+            cli_link::link_cli,
+            cli_link::unlink_cli,
         ])
         // Finder Quick Actions: register the NSServices provider while still
         // launching, so a service request that started the app is not lost.

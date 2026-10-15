@@ -21,6 +21,7 @@ import type {
   ExtractOpts,
   AddOpts,
   LaunchRequest,
+  CliLinkStatus,
 } from "./types";
 
 /**
@@ -230,4 +231,22 @@ export async function dragOut(jobId: string, archive: string, entries: string[])
  */
 export async function dragStagingRoot(): Promise<string> {
   return invoke<string>("drag_staging_root");
+}
+
+/** Whether the bundled `rcomp` CLI is on PATH. */
+export async function cliLinkStatus(): Promise<CliLinkStatus> {
+  return invoke<CliLinkStatus>("cli_link_status");
+}
+
+/**
+ * Put the bundled `rcomp` CLI on PATH. May show the OS administrator prompt
+ * (macOS); rejects with kind `cancelled` when it is dismissed.
+ */
+export async function linkCli(): Promise<CliLinkStatus> {
+  return invoke<CliLinkStatus>("link_cli");
+}
+
+/** Take the `rcomp` CLI link this app made off PATH. */
+export async function unlinkCli(): Promise<CliLinkStatus> {
+  return invoke<CliLinkStatus>("unlink_cli");
 }
