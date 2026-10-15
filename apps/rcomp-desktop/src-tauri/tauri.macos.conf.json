@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
-    "beforeBundleCommand": "bash quicklook/build.sh"
+    "beforeBundleCommand": "bash quicklook/build.sh && bash scripts/macos-sign.sh --identifier com.opensoutheners.rcomp.cli ../../target/rcomp-cli/rcomp"
   },
   "bundle": {
     "macOS": {
       "files": {
-        "PlugIns/RcompQuickLook.appex": "../quicklook/build/RcompQuickLook.appex"
+        "PlugIns/RcompQuickLook.appex": "../quicklook/build/RcompQuickLook.appex",
+        "MacOS/rcomp-cli": "../../../target/rcomp-cli/rcomp"
       }
     }
   }

@@ -20,6 +20,13 @@ declared in `src-tauri/Info.plist` (macOS services, see `services.rs`), `src-tau
 (NSIS/WiX) and `src-tauri/linux/` (deb/rpm files); all launch the app with
 `--compress`/`--decompress`.
 
+Every bundle also carries the `rcomp` CLI, built by `apps/rcomp-desktop/scripts/build-cli.ts`
+(part of `beforeBuildCommand`) into `target/rcomp-cli/`: `Contents/MacOS/rcomp-cli` on macOS
+(signed by `scripts/macos-sign.sh`, which the Quick Look build also uses), `bin\rcomp.exe` on
+Windows (a resource, so on Windows `tauri dev` builds it first), `/usr/bin/rcomp` in Linux
+packages. It is never named `rcomp` next to the `Rcomp` app binary: macOS and Windows file
+systems are case-insensitive. `src-tauri/src/cli_link.rs` puts it on PATH from Settings.
+
 The core takes an `on_progress: impl FnMut(&Progress)` callback and a `CancelToken`
 rather than touching the terminal itself — preserve that boundary when adding features.
 
