@@ -6,7 +6,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeBuildCommand": "bun run build && bun run build:cli"
   },
   "app": {
     "windows": [
@@ -80,6 +80,11 @@
       }
     },
     "linux": {
+      "appimage": {
+        "files": {
+          "/usr/bin/rcomp": "../../../target/rcomp-cli/rcomp"
+        }
+      },
       "deb": {
         "files": {
           "/usr/share/kio/servicemenus/rcomp-compress.desktop": "linux/dolphin-rcomp-compress.desktop",
@@ -88,7 +93,8 @@
           "/usr/share/kservices5/ServiceMenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
           "/usr/share/nemo/actions/rcomp-compress.nemo_action": "linux/rcomp-compress.nemo_action",
           "/usr/share/nemo/actions/rcomp-decompress.nemo_action": "linux/rcomp-decompress.nemo_action",
-          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py"
+          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py",
+          "/usr/bin/rcomp": "../../../target/rcomp-cli/rcomp"
         },
         "recommends": [
           "python3-nautilus"
@@ -102,7 +108,8 @@
           "/usr/share/kservices5/ServiceMenus/rcomp-decompress.desktop": "linux/dolphin-rcomp-decompress.desktop",
           "/usr/share/nemo/actions/rcomp-compress.nemo_action": "linux/rcomp-compress.nemo_action",
           "/usr/share/nemo/actions/rcomp-decompress.nemo_action": "linux/rcomp-decompress.nemo_action",
-          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py"
+          "/usr/share/nautilus-python/extensions/rcomp-nautilus.py": "linux/rcomp-nautilus.py",
+          "/usr/bin/rcomp": "../../../target/rcomp-cli/rcomp"
         },
         "recommends": [
           "nautilus-python"
