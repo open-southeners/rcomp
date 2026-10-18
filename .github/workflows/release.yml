@@ -374,3 +374,22 @@ jobs:
               rename_asset "-setup.exe" "rcomp-desktop_${VERSION}_${PLATFORM}-${ARCH}-setup.exe"
               ;;
           esac
+
+  announce:
+    needs: [publish, desktop]
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+    uses: Pepebits/release-announce/.github/workflows/announce.yml@v1
+    with:
+      tag: ${{ github.ref_name }}
+      notes_source: changelog
+      banner_url: https://opensoutheners.com/gh_card/{repo}
+      install_title: 🦀 Cargo
+      install_command: cargo install rcomp --version {version}
+      buttons: >-
+        [{"text": "📝 Notes", "url": "{repo_url}/releases/tag/{tag}"},
+         {"text": "📦 crates.io", "url": "https://crates.io/crates/rcomp/{version}"}]
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
