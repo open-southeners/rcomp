@@ -2,236 +2,114 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ### Added
 
-- **The `rcomp` command-line tool now ships with the desktop app.** On macOS
-  and Windows, **Settings → Command-Line Tool → Add to PATH** makes it
-  available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS
-  (which may ask for an administrator password), or by adding the app's `bin`
-  folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm`
-  packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to
-  `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew,
-  is never replaced.
+- **The `rcomp` command-line tool now ships with the desktop app.** On macOS and Windows, **Settings → Command-Line Tool → Add to PATH** makes it available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS (which may ask for an administrator password), or by adding the app's `bin` folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew, is never replaced.
 
 ### Fixed
 
-- `--accelerator required` errors now say why the operation could not run: an
-  `--accelerator-device` ID that matches nothing is reported as not found, and
-  a present device names what it lacks (for example, LZ4 encoding only at the
-  `Fast` level). The error no longer implies the CPU was used, and the CLI
-  suggests `--accelerator auto` or `cpu` instead.
-- Desktop app on macOS: **Compress with Rcomp** and **Decompress with Rcomp**
-  from Finder's Quick Actions now receive the selected files. Previously the
-  app opened (or came to the front) but ignored the selection.
+- `--accelerator required` errors now say why the operation could not run: an `--accelerator-device` ID that matches nothing is reported as not found, and a present device names what it lacks (for example, LZ4 encoding only at the `Fast` level). The error no longer implies the CPU was used, and the CLI suggests `--accelerator auto` or `cpu` instead.
+- Desktop app on macOS: **Compress with Rcomp** and **Decompress with Rcomp** from Finder's Quick Actions now receive the selected files. Previously the app opened (or came to the front) but ignored the selection.
 
 ## [0.4.0] - 2026-10-14
 
 ### Added
 
-- **Drag & drop archive editing** in the desktop app. Drag entries out of an
-  open archive to extract just those items wherever you drop them (Finder,
-  Explorer, Linux file managers). Drop files or folders onto an open archive to
-  add them, either at the root or into the folder row under the cursor; items
-  with the same name are replaced after confirmation. Files dropped right after
-  creating an archive are added to that new archive. Adding works for zip, 7z,
-  tar and compressed tarballs (the archive is rebuilt and swapped in only once
-  complete); RAR archives and single compressed files are read-only.
-- **"Compress with Rcomp" and "Decompress with Rcomp"** in the file manager's
-  context menu: as Finder Quick Actions on macOS, as Explorer menu items
-  registered by the Windows installers, and for Dolphin, Nemo and Nautilus
-  (with `python3-nautilus` installed) from the Linux `.deb`/`.rpm` packages.
-  Decompress extracts each archive next to itself (into a folder when it has
-  several top-level items); Compress bundles the selection into a new archive
-  beside it with the default format and never overwrites an existing file. The
-  desktop app accepts the same actions as `--compress <paths…>` and
-  `--decompress <paths…>` launch flags.
-- **Quick Look preview** for archives on macOS 12 and later: press Space on an
-  archive in Finder to see its item count, uncompressed size and a collapsible
-  folder tree with sizes, with a "Show hidden items" toggle. When another app
-  that previews archives is installed, such as BetterZip, macOS decides which
-  preview is shown.
-- `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes
-  entry paths as returned by `list`, and writes each selected file or folder
-  directly into the destination under its own name.
-- `rcomp-core` can add files and folders to an existing archive with
-  `add_to_archive` (and `Engine::add_to_archive`), configured by `AddOptions`
-  (target folder inside the archive, replace-on-clash, level, checksums). The
-  original archive is only replaced once the rebuilt one is complete.
-- Added shared hardware-acceleration selection for the core, CLI, and desktop
-  app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop
-  users can choose Automatic, CPU only, or Require GPU in Settings. Automatic
-  mode reports CPU fallback, while required mode fails clearly when no
-  compatible provider is available.
-- Added an opt-in `rcomp-metal` provider and safe core provider registry. The
-  first experimental capability produces interoperable LZ4 Fast and tar.lz4
-  frames on Apple Silicon when the CLI or Tauri backend is built with
-  `--features metal` and GPU use is explicitly required. Reusable buffers and
-  device-aware bounded batches, a two-batch overlap pipeline, cached native
-  state, and payload-only host copies substantially reduce dispatch overhead.
-  It remains excluded from automatic selection until crossover measurements
-  exist across representative Apple Silicon devices.
-- Added the first opt-in `rcomp-wgpu` provider slice, using a single baseline
-  WGSL LZ4 kernel through Direct3D 12 on Windows, Vulkan on Linux, and Metal on
-  Apple Silicon. It discovers and ranks compatible adapters, derives bounded
-  batches from reported limits, reuses GPU buffers and pipeline state, and
-  integrates with the existing core LZ4 framing, cancellation, and atomic
-  publication path. The capability remains experimental and requires explicit
-  `--accelerator required` selection while Intel, NVIDIA, AMD, and Apple
-  hardware qualification is completed.
-- Added `rcomp hardware` provider/device inventory and exact selection through
-  `--accelerator-device PROVIDER:DEVICE-ID` or `RCOMP_ACCELERATOR_DEVICE`.
-  Provider diagnostics include backend, driver, buffer limits, batch policy,
-  and exact capabilities where available.
-- The `rcomp-wgpu` and `rcomp-metal` provider crates are now published to
-  crates.io alongside `rcomp-core`, so `cargo install rcomp --features wgpu`
-  (or `metal` on macOS) builds the GPU-capable CLI.
-- Added stable structured acceleration fallback reasons alongside the existing
-  human-readable report notice, covering missing providers/devices,
-  unsupported operations, experimental capabilities, explicit selectors, and
-  provider discovery or initialization failures.
-- Expanded the deterministic accelerator harness with malformed block-count,
-  invalid input-length, worker-panic, queued cancellation, active
-  cancellation, and atomic cleanup coverage.
-- Qualified the portable WGSL path on an Apple M3 Max, including block
-  boundaries, incompressible input, a 256 MiB batch boundary, complete LZ4
-  frame round trips, and payload-only readback. The provider remains
-  experimental because the portable Metal path is still slower than CPU and
-  native Metal on the fixed 573 MiB corpus.
-- Qualified the portable GPU path on Windows (Direct3D 12) with an NVIDIA
-  GeForce RTX 3090 and an AMD Radeon integrated GPU. Output decodes with the
-  reference `lz4` tool and is byte-identical across both vendors. Cancellation
-  and failed runs never publish partial output. The path remains experimental
-  and opt-in because it is still slower than CPU LZ4 on this hardware.
+- **Drag & drop archive editing** in the desktop app. Drag entries out of an open archive to extract just those items wherever you drop them (Finder, Explorer, Linux file managers). Drop files or folders onto an open archive to add them, either at the root or into the folder row under the cursor; items with the same name are replaced after confirmation. Files dropped right after creating an archive are added to that new archive. Adding works for zip, 7z, tar and compressed tarballs (the archive is rebuilt and swapped in only once complete); RAR archives and single compressed files are read-only.
+- **"Compress with Rcomp" and "Decompress with Rcomp"** in the file manager's context menu: as Finder Quick Actions on macOS, as Explorer menu items registered by the Windows installers, and for Dolphin, Nemo and Nautilus (with `python3-nautilus` installed) from the Linux `.deb`/`.rpm` packages. Decompress extracts each archive next to itself (into a folder when it has several top-level items); Compress bundles the selection into a new archive beside it with the default format and never overwrites an existing file. The desktop app accepts the same actions as `--compress <paths…>` and `--decompress <paths…>` launch flags.
+- **Quick Look preview** for archives on macOS 12 and later: press Space on an archive in Finder to see its item count, uncompressed size and a collapsible folder tree with sizes, with a "Show hidden items" toggle. When another app that previews archives is installed, such as BetterZip, macOS decides which preview is shown.
+- `rcomp-core` can extract part of an archive: `ExtractOptions::entries` takes entry paths as returned by `list`, and writes each selected file or folder directly into the destination under its own name.
+- `rcomp-core` can add files and folders to an existing archive with `add_to_archive` (and `Engine::add_to_archive`), configured by `AddOptions` (target folder inside the archive, replace-on-clash, level, checksums). The original archive is only replaced once the rebuilt one is complete.
+- Added shared hardware-acceleration selection for the core, CLI, and desktop app. CLI users can set `RCOMP_ACCELERATOR` or pass `--accelerator`; desktop users can choose Automatic, CPU only, or Require GPU in Settings. Automatic mode reports CPU fallback, while required mode fails clearly when no compatible provider is available.
+- Added an opt-in `rcomp-metal` provider and safe core provider registry. The first experimental capability produces interoperable LZ4 Fast and tar.lz4 frames on Apple Silicon when the CLI or Tauri backend is built with `--features metal` and GPU use is explicitly required. Reusable buffers and device-aware bounded batches, a two-batch overlap pipeline, cached native state, and payload-only host copies substantially reduce dispatch overhead. It remains excluded from automatic selection until crossover measurements exist across representative Apple Silicon devices.
+- Added the first opt-in `rcomp-wgpu` provider slice, using a single baseline WGSL LZ4 kernel through Direct3D 12 on Windows, Vulkan on Linux, and Metal on Apple Silicon. It discovers and ranks compatible adapters, derives bounded batches from reported limits, reuses GPU buffers and pipeline state, and integrates with the existing core LZ4 framing, cancellation, and atomic publication path. The capability remains experimental and requires explicit `--accelerator required` selection while Intel, NVIDIA, AMD, and Apple hardware qualification is completed.
+- Added `rcomp hardware` provider/device inventory and exact selection through `--accelerator-device PROVIDER:DEVICE-ID` or `RCOMP_ACCELERATOR_DEVICE`. Provider diagnostics include backend, driver, buffer limits, batch policy, and exact capabilities where available.
+- The `rcomp-wgpu` and `rcomp-metal` provider crates are now published to crates.io alongside `rcomp-core`, so `cargo install rcomp --features wgpu` (or `metal` on macOS) builds the GPU-capable CLI.
+- Added stable structured acceleration fallback reasons alongside the existing human-readable report notice, covering missing providers/devices, unsupported operations, experimental capabilities, explicit selectors, and provider discovery or initialization failures.
+- Expanded the deterministic accelerator harness with malformed block-count, invalid input-length, worker-panic, queued cancellation, active cancellation, and atomic cleanup coverage.
+- Qualified the portable WGSL path on an Apple M3 Max, including block boundaries, incompressible input, a 256 MiB batch boundary, complete LZ4 frame round trips, and payload-only readback. The provider remains experimental because the portable Metal path is still slower than CPU and native Metal on the fixed 573 MiB corpus.
+- Qualified the portable GPU path on Windows (Direct3D 12) with an NVIDIA GeForce RTX 3090 and an AMD Radeon integrated GPU. Output decodes with the reference `lz4` tool and is byte-identical across both vendors. Cancellation and failed runs never publish partial output. The path remains experimental and opt-in because it is still slower than CPU LZ4 on this hardware.
 
 ### Changed
 
-- `ExtractOptions` has a new public `entries` field. Code that builds it with
-  a struct literal must add `..Default::default()` (as the docs recommend).
-- New archives in the desktop app are named after the item when you compress
-  a single file or folder (for example `photos.tar.zst`), instead of `archive`.
-- Accelerated compression now writes to a synchronized temporary sibling and
-  atomically publishes the completed artifact. Cancellation or provider
-  failure removes staging data while preserving any existing destination.
-- Automatic file compression now retries once on CPU when a selected supported
-  accelerator fails during execution. The retry occurs before atomic
-  publication, is reported structurally and in display text, and is never
-  applied to `required`, cancellation, or unrelated codec/I/O failures.
-- Native Metal session creation and each worker dispatch now run inside an
-  explicit Objective-C autorelease pool; the complete native Metal hardware
-  suite passes on the M3 Max with that lifecycle policy.
+- `ExtractOptions` has a new public `entries` field. Code that builds it with a struct literal must add `..Default::default()` (as the docs recommend).
+- New archives in the desktop app are named after the item when you compress a single file or folder (for example `photos.tar.zst`), instead of `archive`.
+- Accelerated compression now writes to a synchronized temporary sibling and atomically publishes the completed artifact. Cancellation or provider failure removes staging data while preserving any existing destination.
+- Automatic file compression now retries once on CPU when a selected supported accelerator fails during execution. The retry occurs before atomic publication, is reported structurally and in display text, and is never applied to `required`, cancellation, or unrelated codec/I/O failures.
+- Native Metal session creation and each worker dispatch now run inside an explicit Objective-C autorelease pool; the complete native Metal hardware suite passes on the M3 Max with that lifecycle policy.
 
 ### Fixed
 
-- Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from
-  `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of
-  silently stopping after the first stream.
-- Extracting with overwrite enabled now replaces existing symlinks and hard
-  links in the destination instead of failing with "already exists".
-- Desktop app: ticking "checksum" when compressing now writes the `.sha256`
-  file next to the archive (it was silently skipped), and a failure to write
-  it is now reported instead of ignored.
-- Tarballs with a leading `./` entry (as written by `tar -C dir -cf x.tar .`)
-  now extract instead of failing, and get a wrap folder like any other
-  multi-root archive.
-- Checksum files with uppercase digests (as written by PowerShell
-  `Get-FileHash` or `certutil`) now verify instead of reporting a mismatch.
-- A failed or cancelled compress no longer truncates or deletes the existing
-  output when overwriting, and never leaves a partial archive behind;
-  single-file extraction (e.g. `.gz` to a file) likewise keeps the existing
-  file intact and leaves nothing behind on error.
-- The CLI progress line no longer crashes on long entry names containing
-  non-ASCII characters.
-- Desktop app: opening or inspecting a large archive no longer freezes the
-  window.
-- Pressing Ctrl-C (or cancelling in the desktop app) while a large file was
-  being added to a `.tar.*` archive or a compressed folder no longer hangs at
-  full CPU. The operation now stops promptly and leaves no partial output.
+- Multi-stream `.bz2`, `.xz`, and `.lz4` files (for example output from `pbzip2`/`lbzip2`, or files joined with `cat`) now decode in full instead of silently stopping after the first stream.
+- Extracting with overwrite enabled now replaces existing symlinks and hard links in the destination instead of failing with "already exists".
+- Desktop app: ticking "checksum" when compressing now writes the `.sha256` file next to the archive (it was silently skipped), and a failure to write it is now reported instead of ignored.
+- Tarballs with a leading `./` entry (as written by `tar -C dir -cf x.tar .`) now extract instead of failing, and get a wrap folder like any other multi-root archive.
+- Checksum files with uppercase digests (as written by PowerShell `Get-FileHash` or `certutil`) now verify instead of reporting a mismatch.
+- A failed or cancelled compress no longer truncates or deletes the existing output when overwriting, and never leaves a partial archive behind; single-file extraction (e.g. `.gz` to a file) likewise keeps the existing file intact and leaves nothing behind on error.
+- The CLI progress line no longer crashes on long entry names containing non-ASCII characters.
+- Desktop app: opening or inspecting a large archive no longer freezes the window.
+- Pressing Ctrl-C (or cancelling in the desktop app) while a large file was being added to a `.tar.*` archive or a compressed folder no longer hangs at full CPU. The operation now stops promptly and leaves no partial output.
 
 ### Security
 
-- Extraction no longer writes through symlinks: an archive can't chain its own
-  symlinks, or reuse ones already in the destination, to place files outside
-  the extraction folder. Such archives are rejected with a path-traversal
-  error, and an existing symlink at an output path is treated as existing (or
-  replaced with overwrite enabled) rather than followed.
-- Extracted files and directories no longer keep setuid, setgid, or sticky
-  bits from the archive; only the regular read/write/execute permissions are
-  restored.
-- The desktop app now enforces a strict Content Security Policy, so content
-  shown in the window can't load remote resources or run injected scripts.
+- Extraction no longer writes through symlinks: an archive can't chain its own symlinks, or reuse ones already in the destination, to place files outside the extraction folder. Such archives are rejected with a path-traversal error, and an existing symlink at an output path is treated as existing (or replaced with overwrite enabled) rather than followed.
+- Extracted files and directories no longer keep setuid, setgid, or sticky bits from the archive; only the regular read/write/execute permissions are restored.
+- The desktop app now enforces a strict Content Security Policy, so content shown in the window can't load remote resources or run injected scripts.
 
 ## [0.3.3] - 2026-09-11
 
 ### Changed
 
-- GitHub release assets for the desktop app are now named
-  `rcomp-desktop_<version>_<platform>-<arch>.<ext>` (e.g.
-  `rcomp-desktop_0.3.2_macos-universal.dmg`), and the release notes now spell
-  out which files are the desktop app versus the `rcomp` CLI (installed via
-  `cargo install rcomp`, not distributed as a release binary).
+- GitHub release assets for the desktop app are now named `rcomp-desktop_<version>_<platform>-<arch>.<ext>` (e.g. `rcomp-desktop_0.3.2_macos-universal.dmg`), and the release notes now spell out which files are the desktop app versus the `rcomp` CLI (installed via `cargo install rcomp`, not distributed as a release binary).
 
 ### Fixed
 
-- The desktop app no longer crashes with a raw GTK panic when launched on
-  Linux with no graphical session (e.g. over SSH on a headless server); it
-  now prints a clear error and exits instead.
+- The desktop app no longer crashes with a raw GTK panic when launched on Linux with no graphical session (e.g. over SSH on a headless server); it now prints a clear error and exits instead.
 
 ## [0.3.2] - 2026-09-08
 
 ### Fixed
 
-- Prevented the ARM64 macOS app from crashing at launch by statically linking
-  `liblzma`.
-- Added CI validation for external dynamic library dependencies in macOS
-  bundles.
+- Prevented the ARM64 macOS app from crashing at launch by statically linking `liblzma`.
+- Added CI validation for external dynamic library dependencies in macOS bundles.
 
 ## [0.3.1] - 2026-09-08
 
 ### Fixed
 
-- Signed and notarized macOS bundles so Gatekeeper recognizes downloaded
-  releases.
+- Signed and notarized macOS bundles so Gatekeeper recognizes downloaded releases.
 
 ## [0.3.0] - 2026-09-07
 
 ### Added
 
 - Added appearance settings with Auto, Light, and Dark modes.
-- Added a default compression codec setting. Auto selects `.tar.zst` for
-  folders or multi-item bundles and `.zst` for single files.
-- Added an in-app changelog viewer, available from the Help menu and version
-  badge, along with links to the project website and repository.
-- Added File and Edit menu commands for common archive operations, search, and
-  job cancellation.
+- Added a default compression codec setting. Auto selects `.tar.zst` for folders or multi-item bundles and `.zst` for single files.
+- Added an in-app changelog viewer, available from the Help menu and version badge, along with links to the project website and repository.
+- Added File and Edit menu commands for common archive operations, search, and job cancellation.
 
 ### Changed
 
-- Redesigned the extraction view with inline destination controls, archive
-  details, checksum status, and file search.
-- Redesigned the compose sidebar with container buttons, a separate codec
-  selector, a compression-level slider, and clearer file controls.
+- Redesigned the extraction view with inline destination controls, archive details, checksum status, and file search.
+- Redesigned the compose sidebar with container buttons, a separate codec selector, a compression-level slider, and clearer file controls.
 - Added a branded macOS title bar while retaining the native window controls.
 - Refreshed the app icon.
 
 ### Fixed
 
-- Corrected extracted-size reporting for single-root archives written into
-  existing directories.
+- Corrected extracted-size reporting for single-root archives written into existing directories.
 - Prevented title bar dragging from scrolling the window content.
-- Fixed files opened from Finder or another application being treated as new
-  archive inputs instead of archives to extract.
+- Fixed files opened from Finder or another application being treated as new archive inputs instead of archives to extract.
 - Corrected the process and macOS menu-bar name to “Rcomp”.
 - Corrected macOS app icon sizing in the Dock and Finder.
 
 ### Removed
 
-- Removed the title bar's New button because it could discard an active
-  operation.
+- Removed the title bar's New button because it could discard an active operation.
 
 ## [0.2.0] - 2026-06-15
 
