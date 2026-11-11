@@ -355,8 +355,13 @@ tar can be combined with any codec: `.tar.gz`, `.tar.bz2`, `.tar.xz`,
 
 The three levels describe the **output ratio**, never the hardware cost.
 `--edge` turns on every ratio-improving feature a codec offers.
-Codec-native multithreading (zstd workers, xz threads) is used at every
-level because it does not change the compressed result.
+Every codec compresses on all CPU cores at every level: zstd and xz through
+their own worker threads, and gzip, bzip2, lz4 and brotli by compressing
+chunks in parallel into one standard stream. The compressed result does not
+depend on how many cores the machine has. The parallel codecs hold a few
+chunks per core in memory, from about 120 MiB for gzip to about 1.2 GiB for
+brotli `--edge` on a 16-core machine; brotli `--edge` uses at most four cores
+for that reason.
 
 | Codec | `--fast` | `--best` (default) | `--edge` |
 |-------|----------|--------------------|----------|
@@ -391,6 +396,11 @@ level because it does not change the compressed result.
   but with the multithreaded xz encoder the interrupt may only take effect
   once encoding finishes its queued blocks (input is already queued to worker
   threads before the cancel signal is checked).
+
+- **Cancelling brotli `--edge`.** Each worker finishes the 8 MiB chunk it is
+  on before it stops, which can take several seconds at this level. The CLI
+  exits without waiting; the desktop app keeps up to four cores busy for
+  that long after a cancel.
 
 ## rar license note
 

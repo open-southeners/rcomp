@@ -283,6 +283,57 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
   iGPU tar is 15% slower (10.9 s → 12.5 s). If the ramp-up matters, persist
   the learned size per device or start larger once a device is known.
 
+- **Where:** `crates/rcomp-core/src/codec/parallel.rs` and the gzip, bzip2,
+  lz4 and brotli encoders (multithreaded CPU compression, 2026-11-11)
+  **What:** The parallel encoders keep `2 x threads` chunks in flight, so
+  peak memory on a 16-core M3 Max rose from about 8 MiB to about 120 MiB
+  (gzip), 60 to 190 MiB (bzip2), 190 to 290 MiB (lz4), and 285 MiB / 520 MiB /
+  1.2 GiB (brotli fast / best / edge). A narrower window was measured and
+  rejected: 20 to 40% less memory but up to 50% more wall time at slow levels,
+  because one chunk on an efficiency core stalls the others. Nothing lets a
+  user cap threads or memory, and brotli `--edge` is hard-capped at four
+  workers (`EDGE_MAX_THREADS`). After a cancel in the desktop app, brotli
+  `--edge` workers finish their current 8 MiB chunk (up to about 8 s of CPU).
+  **Fix:** Decide the thread-limit setting already listed in PLAN_EXTRAS; a
+  `threads` option in core would bound memory too. Not verified on Windows,
+  Linux, or machines with few cores.
+
+- **Where:** `crates/rcomp-core/src/codec/brotli.rs` (Fast level)
+  **What:** brotli 8.0.3 panics at quality 2 when a custom dictionary is set
+  (`brotli_bit_stream.rs:1940`, index out of bounds 65535), seen on the
+  benchmark tar with 512 KiB, 1 MiB and 2 MiB chunks. `--fast` therefore
+  compresses chunks without the previous chunk as a dictionary, which costs
+  about 2.5% against the C `brotli` tool at the same quality. No panic was
+  seen at quality 6 or 11 across more than 1,600 chunk boundaries.
+  **Fix:** Report upstream; enable the dictionary at `--fast` once fixed.
+
+- **Where:** `crates/rcomp-core/src/codec/gzip.rs` + workspace `zip` dependency
+  **What:** flate2 runs on the `zlib-rs` backend only because the `zip`
+  crate's default features switch it on. If those features change, gzip
+  silently falls back to `miniz_oxide`: still correct, but speed and output
+  size change.
+  **Fix:** Enable flate2's `zlib-rs` feature explicitly in the workspace if
+  the backend should be pinned.
+
+- **Where:** `crates/rcomp-core/src/codec/lz4_accelerated.rs` (GPU-written
+  LZ4 frames)
+  **What:** Frames written through a GPU provider carry no block or content
+  checksum (FLG `0x60`), while CPU-written frames carry both, so a corrupted
+  GPU-written `.lz4` is not detected on extraction. Found during the
+  2026-11 GPU feasibility research.
+  **Fix:** Hash blocks and content on the CPU while framing; a streaming
+  XXH32 now exists in the same file.
+
+- **Where:** `crates/rcomp-metal/BENCHMARKS.md`, `crates/rcomp-wgpu/BENCHMARKS.md`
+  **What:** Every GPU-versus-CPU figure in the benchmark logs was taken
+  against the old single-threaded CPU LZ4 encoder. On the M3 Max with a
+  559 MiB tar, CPU LZ4 Fast now takes about 0.22 s against 0.67 s for native
+  Metal and 3.29 s for the portable provider. The portable figure is also far
+  from the 1.18 s the log records for the same machine; the cause was not
+  investigated.
+  **Fix:** Re-run the GPU tables against the multithreaded CPU path before
+  any `Auto` decision, and look into the portable provider's slowdown.
+
 ## Resolved
 
 - **Where:** `crates/rcomp-core/src/acceleration.rs` (`required` selection
