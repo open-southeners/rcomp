@@ -287,58 +287,147 @@ fn block_descriptor(block_size: usize) -> Option<u8> {
     }
 }
 
-fn xxhash32(input: &[u8], seed: u32) -> u32 {
-    const PRIME1: u32 = 2_654_435_761;
-    const PRIME2: u32 = 2_246_822_519;
-    const PRIME3: u32 = 3_266_489_917;
-    const PRIME4: u32 = 668_265_263;
-    const PRIME5: u32 = 374_761_393;
+// ---------------------------------------------------------------------------
+// XXH32 (shared with the CPU LZ4 encoder in `lz4.rs`)
+// ---------------------------------------------------------------------------
 
-    fn round(accumulator: u32, value: u32) -> u32 {
-        const PRIME1: u32 = 2_654_435_761;
-        const PRIME2: u32 = 2_246_822_519;
-        accumulator
-            .wrapping_add(value.wrapping_mul(PRIME2))
-            .rotate_left(13)
-            .wrapping_mul(PRIME1)
-    }
+const PRIME1: u32 = 2_654_435_761;
+const PRIME2: u32 = 2_246_822_519;
+const PRIME3: u32 = 3_266_489_917;
+const PRIME4: u32 = 668_265_263;
+const PRIME5: u32 = 374_761_393;
 
-    let mut offset = 0;
-    let mut hash = if input.len() >= 16 {
-        let mut lane1 = seed.wrapping_add(PRIME1).wrapping_add(PRIME2);
-        let mut lane2 = seed.wrapping_add(PRIME2);
-        let mut lane3 = seed;
-        let mut lane4 = seed.wrapping_sub(PRIME1);
-        while offset <= input.len() - 16 {
-            lane1 = round(lane1, read_u32(input, offset));
-            lane2 = round(lane2, read_u32(input, offset + 4));
-            lane3 = round(lane3, read_u32(input, offset + 8));
-            lane4 = round(lane4, read_u32(input, offset + 12));
-            offset += 16;
-        }
-        lane1
-            .rotate_left(1)
-            .wrapping_add(lane2.rotate_left(7))
-            .wrapping_add(lane3.rotate_left(12))
-            .wrapping_add(lane4.rotate_left(18))
+/// Size of one XXH32 stripe: four 32-bit lanes.
+const STRIPE: usize = 16;
+
+/// One-shot XXH32 of `input`, as used by the LZ4 Frame format for the header,
+/// block and content checksums.
+pub(crate) fn xxhash32(input: &[u8], seed: u32) -> u32 {
+    let stripes_len = input.len() / STRIPE * STRIPE;
+    let hash = if input.len() >= STRIPE {
+        let mut lanes = initial_lanes(seed);
+        consume_stripes(&mut lanes, &input[..stripes_len]);
+        converge(&lanes)
     } else {
         seed.wrapping_add(PRIME5)
     };
+    finalize(hash.wrapping_add(input.len() as u32), &input[stripes_len..])
+}
 
-    hash = hash.wrapping_add(input.len() as u32);
-    while offset + 4 <= input.len() {
+/// Streaming XXH32: produces the same digest as [`xxhash32`] over the
+/// concatenation of every slice passed to [`update`][Self::update].
+pub(crate) struct Xxh32 {
+    seed: u32,
+    lanes: [u32; 4],
+    total_len: u64,
+    /// Bytes of an incomplete stripe carried over to the next update.
+    pending: [u8; STRIPE],
+    pending_len: usize,
+}
+
+impl Xxh32 {
+    /// Start a new digest with `seed`.
+    pub(crate) fn new(seed: u32) -> Self {
+        Self {
+            seed,
+            lanes: initial_lanes(seed),
+            total_len: 0,
+            pending: [0; STRIPE],
+            pending_len: 0,
+        }
+    }
+
+    /// Feed the next bytes of the input.
+    pub(crate) fn update(&mut self, mut input: &[u8]) {
+        self.total_len += input.len() as u64;
+        if self.pending_len > 0 {
+            let take = (STRIPE - self.pending_len).min(input.len());
+            self.pending[self.pending_len..self.pending_len + take].copy_from_slice(&input[..take]);
+            self.pending_len += take;
+            input = &input[take..];
+            if self.pending_len < STRIPE {
+                return;
+            }
+            let stripe = self.pending;
+            consume_stripes(&mut self.lanes, &stripe);
+            self.pending_len = 0;
+        }
+        let stripes_len = input.len() / STRIPE * STRIPE;
+        consume_stripes(&mut self.lanes, &input[..stripes_len]);
+        let rest = &input[stripes_len..];
+        self.pending[..rest.len()].copy_from_slice(rest);
+        self.pending_len = rest.len();
+    }
+
+    /// The digest of everything fed so far.
+    pub(crate) fn digest(&self) -> u32 {
+        let hash = if self.total_len >= STRIPE as u64 {
+            converge(&self.lanes)
+        } else {
+            self.seed.wrapping_add(PRIME5)
+        };
+        // XXH32 folds in the length modulo 2^32.
+        finalize(
+            hash.wrapping_add(self.total_len as u32),
+            &self.pending[..self.pending_len],
+        )
+    }
+}
+
+fn initial_lanes(seed: u32) -> [u32; 4] {
+    [
+        seed.wrapping_add(PRIME1).wrapping_add(PRIME2),
+        seed.wrapping_add(PRIME2),
+        seed,
+        seed.wrapping_sub(PRIME1),
+    ]
+}
+
+fn round(accumulator: u32, value: u32) -> u32 {
+    accumulator
+        .wrapping_add(value.wrapping_mul(PRIME2))
+        .rotate_left(13)
+        .wrapping_mul(PRIME1)
+}
+
+/// Process whole 16-byte stripes; `input.len()` must be a multiple of 16.
+fn consume_stripes(lanes: &mut [u32; 4], input: &[u8]) {
+    debug_assert_eq!(input.len() % STRIPE, 0);
+    let [mut lane1, mut lane2, mut lane3, mut lane4] = *lanes;
+    let mut rest = input;
+    while let Some((stripe, tail)) = rest.split_first_chunk::<STRIPE>() {
+        lane1 = round(lane1, read_u32(stripe, 0));
+        lane2 = round(lane2, read_u32(stripe, 4));
+        lane3 = round(lane3, read_u32(stripe, 8));
+        lane4 = round(lane4, read_u32(stripe, 12));
+        rest = tail;
+    }
+    *lanes = [lane1, lane2, lane3, lane4];
+}
+
+fn converge(lanes: &[u32; 4]) -> u32 {
+    lanes[0]
+        .rotate_left(1)
+        .wrapping_add(lanes[1].rotate_left(7))
+        .wrapping_add(lanes[2].rotate_left(12))
+        .wrapping_add(lanes[3].rotate_left(18))
+}
+
+/// Mix in the final (< 16) bytes and avalanche.
+fn finalize(mut hash: u32, tail: &[u8]) -> u32 {
+    let mut rest = tail;
+    while let Some((word, after)) = rest.split_first_chunk::<4>() {
         hash = hash
-            .wrapping_add(read_u32(input, offset).wrapping_mul(PRIME3))
+            .wrapping_add(u32::from_le_bytes(*word).wrapping_mul(PRIME3))
             .rotate_left(17)
             .wrapping_mul(PRIME4);
-        offset += 4;
+        rest = after;
     }
-    while offset < input.len() {
+    for &byte in rest {
         hash = hash
-            .wrapping_add((input[offset] as u32).wrapping_mul(PRIME5))
+            .wrapping_add((byte as u32).wrapping_mul(PRIME5))
             .rotate_left(11)
             .wrapping_mul(PRIME1);
-        offset += 1;
     }
 
     hash ^= hash >> 15;
@@ -365,6 +454,39 @@ mod tests {
 
     use super::*;
     use crate::CompressedBlock;
+
+    #[test]
+    fn xxhash32_matches_reference_vectors() {
+        // Values from the reference xxHash implementation.
+        assert_eq!(xxhash32(b"", 0), 0x02CC_5D05);
+        assert_eq!(xxhash32(b"a", 0), 0x550D_7456);
+        assert_eq!(xxhash32(b"abc", 0), 0x32D1_53FF);
+        assert_eq!(
+            xxhash32(b"Nobody inspects the spammish repetition", 0),
+            0xE229_3B2F
+        );
+    }
+
+    #[test]
+    fn streaming_xxh32_matches_one_shot_for_any_split() {
+        let data: Vec<u8> = (0..200u32).map(|i| (i * 31 % 251) as u8).collect();
+        for len in 0..data.len() {
+            let input = &data[..len];
+            let expected = xxhash32(input, 0);
+            for split in [1usize, 3, 7, 15, 16, 17, 33] {
+                let mut hasher = Xxh32::new(0);
+                for piece in input.chunks(split) {
+                    hasher.update(piece);
+                }
+                assert_eq!(hasher.digest(), expected, "len {len}, split {split}");
+            }
+            let mut hasher = Xxh32::new(7);
+            hasher.update(&input[..len / 2]);
+            hasher.update(&[]);
+            hasher.update(&input[len / 2..]);
+            assert_eq!(hasher.digest(), xxhash32(input, 7));
+        }
+    }
 
     struct StoredSession;
 
