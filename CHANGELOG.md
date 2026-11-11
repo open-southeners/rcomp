@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **The `rcomp` command-line tool now ships with the desktop app.** On macOS and Windows, **Settings → Command-Line Tool → Add to PATH** makes it available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS (which may ask for an administrator password), or by adding the app's `bin` folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew, is never replaced.
 
+### Changed
+
+- **LZ4, gzip, bzip2 and brotli compression now use every CPU core**, as zstd and xz already did. On a 16-core Apple M3 Max, a 559 MiB tar compresses 6 to 12 times faster with LZ4, gzip and bzip2, and 3 to 18 times faster with brotli, at every level. Each output is still one standard stream that the reference `lz4`, `gzip`, `bzip2` and `brotli` tools read, is the same whatever the number of cores, and is at most 0.4% larger than before.
+- Brotli output at `--fast` and `--best` is smaller: about 10% and 25% smaller on a test archive of source files.
+- Compression with these four codecs uses more memory in exchange for the speed: about 120 MiB for gzip, up to about 200 MiB for bzip2, up to about 300 MiB for LZ4, and about 300 MiB (`--fast`), 500 MiB (`--best`) and 1.2 GiB (`--edge`) for brotli on a 16-core machine. Brotli `--edge` uses at most four cores to keep its memory in check.
+- `.lz4` files are written with independent 4 MiB blocks instead of linked 64 KiB blocks, still with block and content checksums.
+
 ### Fixed
 
 - `--accelerator required` errors now say why the operation could not run: an `--accelerator-device` ID that matches nothing is reported as not found, and a present device names what it lacks (for example, LZ4 encoding only at the `Fast` level). The error no longer implies the CPU was used, and the CLI suggests `--accelerator auto` or `cpu` instead.
