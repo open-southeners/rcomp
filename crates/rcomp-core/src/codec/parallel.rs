@@ -125,6 +125,7 @@ where
             let done_tx = done_tx.clone();
             let work = Arc::clone(&work);
             let spawned = thread::Builder::new()
+                // The CLI's panic hook matches this name; keep them in step.
                 .name("rcomp-codec-worker".into())
                 .spawn(move || worker(&job_rx, &done_tx, &*work));
             match spawned {

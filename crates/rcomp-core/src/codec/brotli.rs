@@ -23,6 +23,8 @@
 //!   they stay valid in the joined stream because those bytes are exactly what
 //!   the decoder has just produced there, within the stream's window.  This is
 //!   what keeps the ratio close to a serial encoder at Best and Edge.
+//! - A primed chunk whose encoder panics is compressed again without its
+//!   dictionary (see "The dictionary retry" below).
 //! - [`brotli::concat::BroCatli`] joins the chunks: it writes one stream header
 //!   for the level's window, strips each chunk's own header and end marker,
 //!   and writes the single end-of-stream marker after the last chunk.
@@ -48,14 +50,33 @@
 //!
 //! Level mapping:
 //!
-//! | Level | quality | lgwin | chunk | dictionary (from previous chunk) | workers |
-//! |-------|---------|-------|-------|----------------------------------|---------|
-//! | Fast  | 2       | 22    | 2 MiB | none                             | all     |
-//! | Best  | 6       | 22    | 2 MiB | 2 MiB                            | all     |
-//! | Edge  | 11      | 24    | 8 MiB | 8 MiB                            | ≤ 4     |
+//! | Level | quality | lgwin | chunk | dictionary (from previous chunk)    | workers |
+//! |-------|---------|-------|-------|-------------------------------------|---------|
+//! | Fast  | 2       | 22    | 2 MiB | none                                | all     |
+//! | Best  | 6       | 22    | 2 MiB | 2 MiB, dropped if the encoder panics | all     |
+//! | Edge  | 11      | 24    | 8 MiB | 8 MiB, dropped if the encoder panics | ≤ 4     |
 //!
-//! Fast takes no dictionary because the `brotli` crate's quality-2 encoder
-//! panics on some inputs when one is set.
+//! # The dictionary retry
+//!
+//! The `brotli` crate (8.0.3, still in 9.1.1) has a bug on the custom
+//! dictionary path: a match that starts in the dictionary and runs past its
+//! end is cut at the dictionary boundary *after* the minimum-length check,
+//! so a distance-cache match starting on the dictionary's last byte becomes a
+//! 1-byte copy, which brotli cannot encode, and the encoder panics with an
+//! index out of bounds in `brotli_bit_stream.rs`.  Qualities 2–3 and 5–9 hit
+//! it; 11 did not in testing but goes through the same code.
+//!
+//! So a chunk whose primed encoder panics is compressed once more with no
+//! dictionary.  The result is a valid catable chunk that just cannot refer to
+//! the previous chunk; on a 573 MiB tar it hit 1 chunk in 287 at Best and
+//! cost 0.02% in size.  The panic depends only on the chunk and its
+//! dictionary, so output stays deterministic.  A panic without a dictionary
+//! still fails the operation.  Remove the retry once a fixed `brotli`
+//! release is in use; the `dictionary_bug_*` tests say when.
+//!
+//! Fast takes no dictionary at all: it dropped it for this same bug before
+//! the retry existed, and quality 2 hits the bug far more often (10 chunks in
+//! 287 on that tar).
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -172,7 +193,35 @@ impl Drop for State {
 /// With `standalone` the result is an ordinary stream.  Otherwise it is a
 /// catable stream for [`BroCatli`], primed with `dict` (the input bytes that
 /// immediately precede `data`) when `dict` is not empty.
+///
+/// If the encoder panics while primed with `dict`, the chunk is compressed
+/// again without it (see the module docs).  The panic is deterministic, so
+/// the output still depends only on the input.  A panic without a dictionary
+/// propagates, and the worker turns it into an error.
 fn compress_chunk(
+    quality: u32,
+    lgwin: u32,
+    flush_interval: usize,
+    data: &[u8],
+    dict: &[u8],
+    standalone: bool,
+) -> io::Result<Vec<u8>> {
+    // A standalone stream never takes the dictionary.
+    if standalone || dict.is_empty() {
+        return encode_chunk(quality, lgwin, flush_interval, data, &[], standalone);
+    }
+    // Unwinding drops the encoder state, and `State` releases it.
+    let primed = std::panic::catch_unwind(|| {
+        encode_chunk(quality, lgwin, flush_interval, data, dict, standalone)
+    });
+    match primed {
+        Ok(result) => result,
+        Err(_) => encode_chunk(quality, lgwin, flush_interval, data, &[], standalone),
+    }
+}
+
+/// One encoder run over `data`; see [`compress_chunk`].
+fn encode_chunk(
     quality: u32,
     lgwin: u32,
     flush_interval: usize,
@@ -748,6 +797,101 @@ mod tests {
                 compressed.len()
             );
         }
+    }
+
+    // --- The brotli dictionary bug (see the module docs) -------------------
+
+    /// Whether the `brotli` crate in use still panics on [`bug_input`].
+    /// Flip to `false` once a fixed release is in use and the dictionary
+    /// retry in `compress_chunk` has been removed.
+    const DICTIONARY_BUG_PRESENT: bool = true;
+
+    /// A generated input that makes the encoder panic at quality 6: the
+    /// dictionary (the first [`BUG_DICT_LEN`] bytes) and the data that
+    /// follows it.  Short low-entropy inputs like this hit the bug often
+    /// (about 1 seed in 17), so no captured file is needed.
+    fn bug_input() -> (Vec<u8>, Vec<u8>) {
+        let mut x = BUG_SEED.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut all: Vec<u8> = (0..BUG_DICT_LEN + BUG_DATA_LEN)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                b'a' + ((x >> 32) % BUG_ALPHABET) as u8
+            })
+            .collect();
+        let data = all.split_off(BUG_DICT_LEN);
+        (all, data)
+    }
+
+    const BUG_SEED: u64 = 50;
+    const BUG_ALPHABET: u64 = 3;
+    const BUG_DICT_LEN: usize = 16;
+    const BUG_DATA_LEN: usize = 4096;
+
+    /// Whether the raw encoder panics on `data` primed with `dict` at Best,
+    /// flushing every `flush_interval` bytes.
+    fn raw_encoder_panics(data: &[u8], dict: &[u8], flush_interval: usize) -> bool {
+        let best = super::plan(Level::Best);
+        std::panic::catch_unwind(|| {
+            super::encode_chunk(best.quality, best.lgwin, flush_interval, data, dict, false)
+        })
+        .is_err()
+    }
+
+    const UPSTREAM_FIXED: &str = "the brotli encoder no longer panics on the dictionary-bug \
+        input: upstream looks fixed. Remove the dictionary retry in `compress_chunk`, \
+        update the module docs and CURRENT_ISSUES.md, and set DICTIONARY_BUG_PRESENT to false";
+
+    #[test]
+    fn dictionary_bug_still_panics_upstream() {
+        let (dict, data) = bug_input();
+        assert_eq!(
+            raw_encoder_panics(&data, &dict, super::FLUSH_INTERVAL),
+            DICTIONARY_BUG_PRESENT,
+            "{}",
+            if DICTIONARY_BUG_PRESENT {
+                UPSTREAM_FIXED
+            } else {
+                "the brotli encoder panics on the dictionary-bug input again"
+            }
+        );
+    }
+
+    #[test]
+    fn dictionary_bug_chunk_is_recovered() {
+        // A chunk boundary right after the dictionary: chunk 0 is filler
+        // ending in the dictionary and primes chunk 1, which is the data.
+        let (dict, data) = bug_input();
+        let chunk = data.len();
+        let mut input = text(chunk - dict.len());
+        input.extend_from_slice(&dict);
+        input.extend_from_slice(&data);
+
+        // The encoder below must actually hit the bug, or this test proves
+        // nothing about the retry.
+        let flush_interval = super::FLUSH_INTERVAL.min(chunk.div_ceil(4));
+        if DICTIONARY_BUG_PRESENT {
+            assert!(
+                raw_encoder_panics(&data, &input[..chunk], flush_interval),
+                "{UPSTREAM_FIXED}"
+            );
+        }
+
+        let mut runs = Vec::new();
+        for threads in [1, 4] {
+            let mut out = Vec::new();
+            {
+                let w: Box<dyn Write> = Box::new(&mut out);
+                let plan = super::plan(Level::Best);
+                let mut enc = super::BrotliEncoder::new(w, plan, chunk, threads).unwrap();
+                enc.write_all(&input).unwrap();
+                super::Encoder::finish(Box::new(enc)).unwrap();
+            }
+            assert_eq!(decompress(&out), input, "{threads} threads");
+            runs.push(out);
+        }
+        assert_eq!(runs[0], runs[1], "output depends on the thread count");
     }
 
     #[test]

@@ -5,6 +5,37 @@ implementation. Each entry: **Where**, **What**, suggested **Fix**.
 
 ## Open
 
+- **Where:** `crates/rcomp-core/src/codec/brotli.rs` — parallel brotli at `Level::Best`
+  (workaround in; upstream bug still open)
+  **What:** `rcomp big.tar big.tar.br` (default level) failed with a worker panic in
+  `brotli-8.0.3/src/enc/brotli_bit_stream.rs:1940` ("index out of bounds: the len is
+  24 but the index is 65535") and a bare `error: compress failed`. Found on
+  2026-11-11 with a 573 MiB tar of `node_modules`: 1 of its 287 chunks fails, on every
+  run. Cause is in the `brotli` crate, still present in 9.1.1: with a custom
+  dictionary set, a match that starts in the dictionary and runs past its end is cut
+  at the dictionary boundary (`fix_unbroken_len`) *after* the minimum-length check,
+  so a distance-cache match starting on the dictionary's last byte becomes a 1-byte
+  copy, which brotli cannot encode. Qualities 5 to 9 hit it through the last-distance
+  search; qualities 2 and 3 hit it more often (10 of 287 chunks at quality 2), which
+  is the panic that made Fast drop its dictionary. Quality 4 and 10/11 did not fail.
+  Small low-entropy inputs trigger it readily (about 1 seed in 17 for 256 to 4096
+  random bytes over a 2 to 8 letter alphabet after a 16-byte dictionary), but a
+  128 MiB file of random `acgt` bytes in 2 MiB chunks hit it 0 times in 64. No wrong
+  output was seen: a chunk either panics or round-trips.
+  **Workaround (in):** a chunk whose dictionary-primed encoder panics is
+  compressed again without its dictionary (Best and Edge; Fast still takes none).
+  Output stays deterministic and costs about 0.02% on that tar; a panic without a
+  dictionary still fails the operation. The CLI's panic hook keeps these brotli
+  encoder panics off stderr and prints the panic as a `note:` if the operation
+  fails anyway. The `dictionary_bug_*` tests in `brotli.rs` generate a 4 KiB input
+  that triggers it, and `dictionary_bug_still_panics_upstream` fails once the crate
+  no longer panics on it.
+  **Fix:** Report the bug upstream (cause above, generated input in the tests; a five-site
+  patch applying the length check after the cut made qualities 2, 4, 5, 6 and 9
+  pass and round-trip on the corpus). Once a fixed release is in use, remove the
+  retry and the CLI hook, flip `DICTIONARY_BUG_PRESENT`, and consider giving Fast
+  its dictionary back (2.2% smaller).
+
 - **Where:** `apps/rcomp-desktop` — drag & drop editing (M1 of the 2026-10-11 plan)
   **What:** Built and type-checked, core/backend covered by tests, but the
   interactive pieces were never exercised with a real mouse: (a) `drag_out`
