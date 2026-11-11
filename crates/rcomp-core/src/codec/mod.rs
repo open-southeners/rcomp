@@ -20,6 +20,7 @@ pub(crate) mod bzip2;
 pub(crate) mod gzip;
 pub(crate) mod lz4;
 pub(crate) mod lz4_accelerated;
+pub(crate) mod parallel;
 pub(crate) mod xz;
 pub(crate) mod zstd;
 
@@ -110,7 +111,7 @@ pub fn new_decoder<'a>(
 /// Returns the number of logical CPU threads available, falling back to `1`
 /// on error (e.g. unsupported platform or permission restriction).
 ///
-/// Used by codec backends that support multi-threaded encoding (xz, zstd).
+/// Used by every codec backend to size its multi-threaded encoder.
 pub(crate) fn workers() -> u32 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u32)
