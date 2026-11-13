@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
 ### Added
 
 - **The `rcomp` command-line tool now ships with the desktop app.** On macOS and Windows, **Settings → Command-Line Tool → Add to PATH** makes it available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS (which may ask for an administrator password), or by adding the app's `bin` folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew, is never replaced.
@@ -138,7 +140,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Initial release.
 
-[Unreleased]: https://github.com/open-southeners/rcomp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/open-southeners/rcomp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/open-southeners/rcomp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/open-southeners/rcomp/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/open-southeners/rcomp/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/open-southeners/rcomp/compare/v0.3.1...v0.3.2

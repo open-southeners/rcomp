@@ -37,7 +37,7 @@ rcomp-core = { path = "../../../crates/rcomp-core", default-features = false, fe
 tauri-plugin-single-instance = "2"
 # Native drag sessions, so archive entries can be dragged out to the file manager.
 drag = "2"
-rcomp-wgpu = { path = "../../../crates/rcomp-wgpu", version = "0.4.0", optional = true }
+rcomp-wgpu = { path = "../../../crates/rcomp-wgpu", version = "0.5.0", optional = true }
 
 # Menu bar / notification-area progress for context-menu jobs (see `background.rs`).
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
@@ -48,7 +48,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL"] }
-rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.4.0", optional = true }
+rcomp-metal = { path = "../../../crates/rcomp-metal", version = "0.5.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Adding the bundled CLI's folder to the user's Path (see `cli_link.rs`).
