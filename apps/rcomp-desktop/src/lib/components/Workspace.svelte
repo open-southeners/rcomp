@@ -36,6 +36,7 @@
     inspectPath,
     listEntries,
     getLaunchRequests,
+    saveBackgroundPreferences,
     onLaunchRequest,
     onShowChangelog,
     onMenuOpenArchive,
@@ -99,6 +100,12 @@
     saveAcceleration(next);
   }
 
+  // Context-menu actions run in the backend without this window, so hand it
+  // the same defaults.
+  $effect(() => {
+    void saveBackgroundPreferences(defaultFormatPref, acceleration).catch(() => {});
+  });
+
   // --- open mode ---
   let archivePath = $state<string | null>(null);
   let archiveInspect = $state<InspectResult | null>(null);
@@ -128,16 +135,6 @@
   let fileDrag = $state<{ key: string | null; prefix: string | null } | null>(null);
   /** Entries being extracted for a drag-out, before the native drag starts. */
   let dragOutCount = $state(0);
-
-  // --- context-menu quick actions ---
-  /** Bumped to make ExtractBar / ComposePanel run once with their defaults. */
-  let autoExtract = $state(0);
-  let autoCompress = $state(0);
-  /** Archives still to extract from one "Decompress with Rcomp" request. */
-  let decompressQueue: string[] = [];
-  /** Paths gathered for one "Compress with Rcomp" (see `queueCompress`). */
-  let compressBatch: string[] = [];
-  let compressTimer: ReturnType<typeof setTimeout> | null = null;
 
   let unlistenDrop: (() => void) | null = null;
   let unlistenOpen: (() => void) | null = null;
@@ -404,64 +401,11 @@
   }
 
   // -------------------------------------------------------------------------
-  // File-manager context-menu actions ("Compress/Decompress with Rcomp").
+  // OS requests. Only "open" reaches the window: the file-manager context-menu
+  // actions run in the backend without it (see `background.rs`).
   // -------------------------------------------------------------------------
   async function handleLaunchRequest(req: LaunchRequest): Promise<void> {
-    if (req.action === "open") {
-      await openFromOS(req.paths);
-    } else if (req.action === "decompress") {
-      decompressQueue.push(...req.paths);
-      if (!run) await nextDecompress();
-    } else {
-      queueCompress(req.paths);
-    }
-  }
-
-  /** Open the next queued archive and extract it with the default settings. */
-  async function nextDecompress(): Promise<void> {
-    const path = decompressQueue.shift();
-    if (!path) return;
-    let res: InspectResult;
-    try {
-      res = await inspectPath(path);
-    } catch (err: unknown) {
-      globalError = (err as { message?: string }).message ?? `Failed to inspect ${baseName(path)}.`;
-      await nextDecompress();
-      return;
-    }
-    if (!res.is_archive) {
-      globalError = `"${baseName(path)}" isn't a supported archive format.`;
-      await nextDecompress();
-      return;
-    }
-    showSettings = false;
-    showChangelog = false;
-    await openArchive(path, res);
-    if (!entriesError) autoExtract += 1;
-  }
-
-  /**
-   * Gather paths for one compress action. Windows launches the app once per
-   * selected item, so deliveries arriving close together become one archive.
-   */
-  function queueCompress(paths: string[]): void {
-    compressBatch.push(...paths.filter((p) => !compressBatch.includes(p)));
-    if (compressTimer) clearTimeout(compressTimer);
-    compressTimer = setTimeout(() => {
-      compressTimer = null;
-      const batch = compressBatch;
-      compressBatch = [];
-      if (run) {
-        globalError = "Another operation is running; try compressing again when it finishes.";
-        return;
-      }
-      void (async () => {
-        showSettings = false;
-        showChangelog = false;
-        await startCompose(batch);
-        if (composeItems.length > 0) autoCompress += 1;
-      })();
-    }, 400);
+    if (req.action === "open") await openFromOS(req.paths);
   }
 
   async function openArchive(path: string, inspect: InspectResult): Promise<void> {
@@ -561,19 +505,16 @@
   function handleDoneExtract(report: Report, dest: string, verified: boolean): void {
     result = { report, dest, kind: "extract", verified };
     run = null;
-    if (decompressQueue.length > 0) void nextDecompress();
   }
 
   function handleError(err: IpcError): void {
     globalError = err.message;
     run = null;
-    decompressQueue = [];
   }
 
   function handleCancel(): void {
     run = null;
     latestProgress = null;
-    decompressQueue = [];
   }
 
   function reset(): void {
@@ -643,7 +584,6 @@
     if (unlistenDrop) unlistenDrop();
     if (unlistenOpen) unlistenOpen();
     if (unlistenChangelog) unlistenChangelog();
-    if (compressTimer) clearTimeout(compressTimer);
     menuUnlisten.forEach((fn) => fn());
   });
 </script>
@@ -703,7 +643,6 @@
           onDone={handleDoneExtract}
           onError={handleError}
           onIdle={handleCancel}
-          autoRun={autoExtract}
         />
       {/if}
       <FileList
@@ -757,7 +696,6 @@
             onProgress={handleProgress}
             onDone={handleDoneCompress}
             onError={handleError}
-            autoRun={autoCompress}
           />
         {/if}
       </section>

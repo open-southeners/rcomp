@@ -5,7 +5,8 @@
 //! the chosen message (`compressFiles:userData:error:` or
 //! `decompressFiles:userData:error:`) to the object registered here, launching
 //! the app first when needed.  The selected files arrive on a pasteboard as
-//! file URLs and are delivered to the frontend like any other launch request.
+//! file URLs and run in the background like the other platforms' context-menu
+//! requests (see `background.rs`), without opening the window.
 //!
 //! Services are only registered for a bundled app that LaunchServices knows
 //! about (e.g. installed in `/Applications`); `tauri dev` does not show them.
@@ -70,7 +71,7 @@ impl ServicesProvider {
 
     fn deliver(&self, action: LaunchAction, pboard: &NSPasteboard) {
         let paths = open_files::existing_paths(file_paths(pboard), Path::new("/"));
-        open_files::deliver(&self.ivars().app, LaunchRequest { action, paths });
+        open_files::dispatch(&self.ivars().app, LaunchRequest { action, paths });
     }
 }
 

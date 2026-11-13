@@ -52,6 +52,14 @@ or, on archives, **Decompress with Rcomp**:
 | Windows | Explorer context menu (on Windows 11, under *Show more options*), installed by both the `.exe` and `.msi` installers |
 | Linux | Dolphin, Nemo, and Nautilus (needs `python3-nautilus`), installed by the `.deb` and `.rpm` packages; not available for the AppImage |
 
+Both run in the background without opening the Rcomp window and post a
+notification when done. Decompress extracts each archive next to itself, into
+a new folder named after the archive when it has several top-level items or
+its single item's name is taken; Compress writes one archive beside the
+selection in the default format from Settings. Neither ever overwrites a file:
+names are made unique (`photos 2`). On macOS and Windows a menu bar /
+notification-area icon shows progress for longer jobs and can cancel them.
+
 **Quick Look (macOS 12+).** Press Space on an archive in Finder to preview its
 contents. If another archive previewer such as BetterZip is installed, macOS
 picks which one is shown.

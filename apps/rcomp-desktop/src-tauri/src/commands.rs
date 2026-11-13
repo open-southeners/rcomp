@@ -371,7 +371,7 @@ pub fn do_wrap_info(input: &Path) -> Result<WrapInfo, IpcError> {
 /// Build the engine for one operation.  Accelerator providers are only
 /// discovered when the job may use one, so CPU-only jobs skip GPU adapter
 /// enumeration entirely.
-fn operation_engine(preference: AccelerationPreference) -> Engine {
+pub(crate) fn operation_engine(preference: AccelerationPreference) -> Engine {
     let providers = ProviderRegistry::new();
     if preference == AccelerationPreference::Cpu {
         return Engine::with_registry(providers);

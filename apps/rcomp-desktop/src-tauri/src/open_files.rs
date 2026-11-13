@@ -13,7 +13,9 @@
 //!   `--compress` / `--decompress` followed by the selected paths
 //!   (see [`requests_from_args`]).
 //!
-//! All of them funnel through [`deliver`]. Requests that arrive before the
+//! All of them funnel through [`dispatch`]: compress / decompress requests run
+//! in the background without a window (see `background.rs`); open requests show
+//! the main window and go to the frontend through [`deliver`]. Requests that arrive before the
 //! frontend is ready are buffered in [`OpenPaths`]; the frontend drains them
 //! once on startup via [`get_launch_requests`] (which also flips the "ready"
 //! flag), after which later deliveries are emitted live on the
@@ -134,6 +136,23 @@ pub fn requests_from_args<I: IntoIterator<Item = String>>(
             (!paths.is_empty()).then_some(LaunchRequest { action, paths })
         })
         .collect()
+}
+
+/// Route an OS request: context-menu actions run in the background with no
+/// window; "Open with" shows the main window and hands the files to it.
+pub fn dispatch(app: &AppHandle, request: LaunchRequest) {
+    if request.paths.is_empty() {
+        return;
+    }
+    match request.action {
+        LaunchAction::Open => {
+            crate::window::show(app);
+            deliver(app, request);
+        }
+        LaunchAction::Compress | LaunchAction::Decompress => {
+            crate::background::submit(app, request);
+        }
+    }
 }
 
 /// Deliver `request` to the frontend: emit live when ready, else buffer it.

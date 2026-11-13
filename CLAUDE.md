@@ -18,7 +18,9 @@ Quick Look extension is `apps/rcomp-desktop/quicklook`: the `rcomp-quicklook` st
 `quicklook/build.sh` as Tauri's macOS `beforeBundleCommand`. File-manager context menus are
 declared in `src-tauri/Info.plist` (macOS services, see `services.rs`), `src-tauri/windows/`
 (NSIS/WiX) and `src-tauri/linux/` (deb/rpm files); all launch the app with
-`--compress`/`--decompress`.
+`--compress`/`--decompress`, which `background.rs` runs without a window (notification when
+done, tray progress on macOS/Windows; the app quits afterwards if no window was open). The
+main window is `"create": false` in `tauri.conf.json` and is only made by `window::show`.
 
 Every bundle also carries the `rcomp` CLI, built by `apps/rcomp-desktop/scripts/build-cli.ts`
 (part of `beforeBuildCommand`) into `target/rcomp-cli/`: `Contents/MacOS/rcomp-cli` on macOS

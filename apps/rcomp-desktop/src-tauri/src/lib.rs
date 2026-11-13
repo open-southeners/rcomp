@@ -1,3 +1,4 @@
+pub mod background;
 pub mod changelog;
 pub mod cli_link;
 pub mod commands;
@@ -10,6 +11,7 @@ pub mod open_files;
 pub mod progress;
 #[cfg(target_os = "macos")]
 pub mod services;
+pub mod window;
 
 use tauri::Manager as _;
 
@@ -34,6 +36,11 @@ fn ensure_display_available() {
     }
 }
 
+/// How long a macOS launch waits for a Quick Action request before showing
+/// the window.
+#[cfg(target_os = "macos")]
+const MACOS_LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Entry point for the Tauri application.
 ///
 /// Builds the Tauri app instance, registers managed state (the [`job::JobRegistry`]
@@ -56,19 +63,26 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .manage(job::JobRegistry::default())
         .manage(open_files::OpenPaths::default())
+        .manage(background::Background::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
 
-    // Desktop single-instance: a second launch (e.g. "Open with" on
-    // Windows/Linux) forwards its argv to this running instance instead of
-    // spawning a new window.  The plugin must be registered first so it can
-    // intercept the duplicate launch before any window is created.
+    // Desktop single-instance: a second launch (e.g. "Open with" or a
+    // context-menu action on Windows/Linux) forwards its argv to this running
+    // instance instead of spawning a new process.  The plugin must be
+    // registered first so it can intercept the duplicate launch before any
+    // window is created.  A plain second launch shows the window.
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let base = std::path::PathBuf::from(&cwd);
-            for request in open_files::requests_from_args(argv.into_iter().skip(1), &base) {
-                open_files::deliver(app, request);
+            let requests = open_files::requests_from_args(argv.into_iter().skip(1), &base);
+            if requests.is_empty() {
+                window::show(app);
+            }
+            for request in requests {
+                open_files::dispatch(app, request);
             }
         }));
     }
@@ -97,16 +111,37 @@ pub fn run() {
             #[cfg(desktop)]
             drag_out::drag_staging_root,
             open_files::get_launch_requests,
+            background::save_background_preferences,
             changelog::get_changelog,
             cli_link::cli_link_status,
             cli_link::link_cli,
             cli_link::unlink_cli,
         ])
-        // Finder Quick Actions: register the NSServices provider while still
-        // launching, so a service request that started the app is not lost.
-        .setup(|_app| {
+        .setup(|app| {
+            // Finder Quick Actions: register the NSServices provider while
+            // still launching, so a service request that started the app is
+            // not lost.  Stay out of the Dock until a window is shown, so
+            // context-menu jobs run quietly.
             #[cfg(target_os = "macos")]
-            services::register(_app.handle());
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                services::register(app.handle());
+            }
+
+            // Windows/Linux pass files and context-menu actions as launch
+            // arguments.  Only "Open with" (or a plain launch) needs the
+            // window; `--compress` / `--decompress` run without one.
+            #[cfg(not(target_os = "macos"))]
+            {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let requests = open_files::requests_from_args(std::env::args().skip(1), &cwd);
+                if requests.is_empty() {
+                    window::show(app.handle());
+                }
+                for request in requests {
+                    open_files::dispatch(app.handle(), request);
+                }
+            }
             Ok(())
         })
         // Cancel all in-flight jobs when the last window requests close.
@@ -126,32 +161,48 @@ pub fn run() {
         std::thread::spawn(move || drag_out::purge_stale(&root));
     }
 
-    // Capture file paths passed as launch arguments (Windows/Linux "open with"
-    // on first launch).  Buffered until the frontend drains them on startup.
-    #[cfg(desktop)]
-    {
-        if let Ok(cwd) = std::env::current_dir() {
-            for request in open_files::requests_from_args(std::env::args().skip(1), &cwd) {
-                app.state::<open_files::OpenPaths>().push(request);
-            }
+    app.run(|app_handle, event| match event {
+        // Closing the last window while a context-menu job runs keeps the app
+        // alive until the job ends (`background::quit_if_idle` then quits).
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } if app_handle.state::<background::Background>().is_busy() => {
+            api.prevent_exit();
         }
-    }
-
-    app.run(|_app_handle, _event| {
+        // macOS: a launch from the Dock or Finder shows the window; one for a
+        // Quick Action doesn't.  The service request arrives just after the
+        // app finishes launching, so wait briefly before deciding.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Ready => {
+            let app = app_handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(MACOS_LAUNCH_GRACE);
+                if !window::is_open(&app)
+                    && !app
+                        .state::<background::Background>()
+                        .has_received_requests()
+                {
+                    window::show(&app);
+                }
+            });
+        }
+        // macOS: clicking the Dock icon with no window open.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => window::show(app_handle),
         // macOS delivers "open with" files as an Opened event, both at launch
         // (possibly before the webview is ready) and while running.  This
         // RunEvent variant only exists on macOS; Windows/Linux deliver the
-        // paths via argv (handled above) and the single-instance plugin.
+        // paths via argv (handled in `setup`) and the single-instance plugin.
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Opened { urls } = _event {
-            let paths = open_files::paths_from_urls(urls);
-            open_files::deliver(
-                _app_handle,
+        tauri::RunEvent::Opened { urls } => {
+            open_files::dispatch(
+                app_handle,
                 open_files::LaunchRequest {
                     action: open_files::LaunchAction::Open,
-                    paths,
+                    paths: open_files::paths_from_urls(urls),
                 },
             );
         }
+        _ => {}
     });
 }
