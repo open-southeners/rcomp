@@ -22,7 +22,7 @@
 //! `launch-request` event.
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -187,7 +187,7 @@ pub fn paths_from_urls<I: IntoIterator<Item = tauri::Url>>(urls: I) -> Vec<Strin
     urls.into_iter()
         .filter_map(|u| u.to_file_path().ok())
         .filter(|p| p.exists())
-        .map(|p: PathBuf| p.to_string_lossy().into_owned())
+        .map(|p| p.to_string_lossy().into_owned())
         .collect()
 }
 

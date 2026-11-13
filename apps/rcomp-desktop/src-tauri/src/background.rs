@@ -276,9 +276,6 @@ struct State {
     received: bool,
     /// Cancel token of the job in progress.
     current: Option<rcomp_core::CancelToken>,
-    /// Notifications still on screen (Linux keeps them only while we run).
-    #[cfg(all(unix, not(target_os = "macos")))]
-    open_notifications: usize,
 }
 
 /// Background job queue (Tauri managed state).
@@ -371,7 +368,7 @@ fn ensure_worker(app: &AppHandle) {
 
 fn worker(app: AppHandle) {
     let prefs = load_preferences(&app);
-    let tray = Arc::new(Mutex::new(tray::Tray::default()));
+    let tray = Arc::new(Mutex::new(tray::Tray::new()));
     loop {
         let (job, cancel) = {
             let bg = app.state::<Background>();
@@ -576,56 +573,30 @@ fn notify_outcome(app: &AppHandle, job: &Job, outcome: Outcome) {
         }
     };
 
-    let builder = app.notification().builder().title(title).body(body);
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let builder = {
-        app.state::<Background>().lock().open_notifications += 1;
-        let app = app.clone();
-        builder.on_close(move || {
-            let bg = app.state::<Background>();
-            {
-                let mut s = bg.lock();
-                s.open_notifications = s.open_notifications.saturating_sub(1);
-            }
-            quit_if_idle(&app);
-        })
-    };
-    if builder.show().is_err() {
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            let bg = app.state::<Background>();
-            let mut s = bg.lock();
-            s.open_notifications = s.open_notifications.saturating_sub(1);
-        }
-    }
+    let _ = app.notification().builder().title(title).body(body).show();
 }
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-/// Quit when the app has nothing left to do: no window, no jobs, and (on
-/// Linux, where notification servers drop a notification when its sender
-/// exits) no notification still showing.
+/// How long the app stays after its last job before quitting.  Notifications
+/// are posted asynchronously, and Linux notification servers (GNOME's among
+/// them) drop a notification once the app that sent it exits, so there the app
+/// waits until a typical notification has been read.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const QUIT_DELAY: Duration = Duration::from_millis(1500);
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const QUIT_DELAY: Duration = Duration::from_secs(10);
+
+/// Quit when the app has nothing left to do: no window and no jobs.
 pub fn quit_if_idle(app: &AppHandle) {
     if crate::window::is_open(app) || app.state::<Background>().is_busy() {
         return;
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    if app.state::<Background>().lock().open_notifications > 0 {
-        // Don't linger forever if a server never reports the close.
-        let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(60));
-            app.state::<Background>().lock().open_notifications = 0;
-            quit_if_idle(&app);
-        });
-        return;
-    }
-    // macOS and Windows post notifications asynchronously; give them a moment.
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(1500));
+        std::thread::sleep(QUIT_DELAY);
         if !crate::window::is_open(&app) && !app.state::<Background>().is_busy() {
             app.exit(0);
         }
@@ -655,6 +626,10 @@ mod tray {
     }
 
     impl Tray {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
         pub fn update(&mut self, app: &AppHandle, text: &str) {
             if let Some(status) = &self.status {
                 let _ = status.set_text(text);
@@ -705,10 +680,13 @@ mod tray {
 mod tray {
     use tauri::AppHandle;
 
-    #[derive(Default)]
     pub struct Tray;
 
     impl Tray {
+        pub fn new() -> Self {
+            Self
+        }
+
         pub fn update(&mut self, _app: &AppHandle, _text: &str) {}
         pub fn remove(&mut self, _app: &AppHandle) {}
     }
