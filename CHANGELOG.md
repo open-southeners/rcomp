@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `--accelerator required` errors now say why the operation could not run: an `--accelerator-device` ID that matches nothing is reported as not found, and a present device names what it lacks (for example, LZ4 encoding only at the `Fast` level). The error no longer implies the CPU was used, and the CLI suggests `--accelerator auto` or `cpu` instead.
 - Desktop app on macOS: **Compress with Rcomp** and **Decompress with Rcomp** from Finder's Quick Actions now receive the selected files. Previously the app opened (or came to the front) but ignored the selection.
+- macOS: `.zst`, `.tar.zst`, `.tzst`, `.br` and `.tar.br` files now get the Quick Look preview and the **Decompress with Rcomp** Quick Action, like other archives. macOS has no file type for these extensions, so Rcomp now declares them.
 - The Quick Look preview's **Show hidden items** checkbox now shows a checkmark when it is on, instead of a filled square.
 
 ## [0.4.0] - 2026-10-14

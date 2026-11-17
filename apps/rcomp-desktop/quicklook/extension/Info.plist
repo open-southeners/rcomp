@@ -3,7 +3,10 @@
 <!--
   Info.plist template for RcompQuickLook.appex; build.sh fills in __VERSION__.
   QLSupportedContentTypes lists the concrete system types macOS assigns to
-  each supported extension (org.lz4.lz4-archive is declared by the app).
+  each supported extension. macOS has no type for .lz4, .zst, .tzst or .br,
+  so the app's Info.plist declares org.lz4.lz4-archive,
+  com.facebook.zst-archive, com.facebook.tar-zst-archive and
+  com.google.br-archive.
 -->
 <plist version="1.0">
 <dict>
