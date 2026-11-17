@@ -219,9 +219,11 @@ enum ArchivePreview {
         .format { color: var(--dim); text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
         label { cursor: default; display: flex; align-items: center; gap: 6px; }
         label::before { content: ""; width: 14px; height: 14px; border: 1px solid var(--line);
-          border-radius: 4px; background: var(--bg); }
+          border-radius: 4px; background: var(--bg) no-repeat center / 10px 10px; }
         .toggle { display: none; }
-        .toggle:checked ~ header label::before { background: var(--folder); border-color: var(--folder); }
+        .toggle:checked ~ header label::before { background-color: var(--folder);
+          border-color: var(--folder);
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.6 2.6' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
         .columns { display: flex; justify-content: space-between; padding: 4px 16px 4px 34px;
           border-bottom: 1px solid var(--line); font-weight: 600; }
         main { background: repeating-linear-gradient(var(--bg) 0 24px, var(--stripe) 24px 48px);
