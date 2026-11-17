@@ -8,8 +8,18 @@
  */
 
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
+
+/**
+ * Listen to an event sent to this window. The backend sends menu commands and
+ * "Open with" requests to one window (the focused one, or the one picked for
+ * the file), so listeners are scoped to the window rather than app-wide.
+ */
+function listen<T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> {
+  return getCurrentWebviewWindow().listen<T>(event, handler);
+}
 import type {
   InspectResult,
   Entry,
@@ -23,6 +33,11 @@ import type {
   LaunchRequest,
   CliLinkStatus,
 } from "./types";
+
+/** Tell the backend whether this window is empty, so "Open with" can reuse it. */
+export async function setWindowIdle(idle: boolean): Promise<void> {
+  await invoke("set_window_idle", { idle });
+}
 
 /**
  * Save the Settings defaults that file-manager "Compress/Decompress with

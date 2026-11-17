@@ -64,6 +64,7 @@ pub fn run() {
         .manage(job::JobRegistry::default())
         .manage(open_files::OpenPaths::default())
         .manage(background::Background::default())
+        .manage(window::Windows::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
@@ -112,6 +113,7 @@ pub fn run() {
             drag_out::drag_staging_root,
             open_files::get_launch_requests,
             background::save_background_preferences,
+            window::set_window_idle,
             changelog::get_changelog,
             cli_link::cli_link_status,
             cli_link::link_cli,
@@ -144,13 +146,21 @@ pub fn run() {
             }
             Ok(())
         })
-        // Cancel all in-flight jobs when the last window requests close.
-        // `cancel_all` trips every registered CancelToken; worker threads call
-        // `reg.finish(id)` as they unwind, removing their entries.
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                window.state::<job::JobRegistry>().cancel_all();
+        // Closing a window cancels the jobs it started (worker threads call
+        // `reg.finish(id)` as they unwind); other windows keep theirs.
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { .. } => {
+                window
+                    .state::<job::JobRegistry>()
+                    .cancel_owned_by(window.label());
             }
+            tauri::WindowEvent::Destroyed => {
+                window.state::<window::Windows>().forget(window.label());
+                window
+                    .state::<open_files::OpenPaths>()
+                    .forget(window.label());
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

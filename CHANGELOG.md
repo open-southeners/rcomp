@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **The `rcomp` command-line tool now ships with the desktop app.** On macOS and Windows, **Settings → Command-Line Tool → Add to PATH** makes it available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS (which may ask for an administrator password), or by adding the app's `bin` folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew, is never replaced.
+- **Several windows at once** in the desktop app: each archive opened from Finder, Explorer or a file manager gets its own window (an empty window is reused), and **File → New Window** (⇧⌘N / Ctrl+Shift+N) opens another one, so you can browse or create several archives side by side. Menu commands act on the front window, and closing a window cancels only that window's job.
 - **Hidden files are hidden** in the desktop app's archive listing by default, as in the Quick Look preview: dotfiles such as `.DS_Store`, macOS `__MACOSX` folders and Windows `Thumbs.db`/`desktop.ini`. **Settings → Hidden Files** shows them. Extracting still writes every entry.
 
 ### Changed

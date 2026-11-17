@@ -642,9 +642,14 @@ pub async fn compress(
     opts: CompressOpts,
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
+    window: tauri::WebviewWindow,
 ) -> Result<Report, IpcError> {
     let format = parse_format(opts.format.as_deref())?;
-    let core_opts = compress_options(opts, format, registry.register(job_id.clone()));
+    let core_opts = compress_options(
+        opts,
+        format,
+        registry.register_for(job_id.clone(), window.label()),
+    );
     let input_path = std::path::PathBuf::from(input);
     let output_path = std::path::PathBuf::from(output);
 
@@ -673,9 +678,14 @@ pub async fn compress_many(
     opts: CompressOpts,
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
+    window: tauri::WebviewWindow,
 ) -> Result<Report, IpcError> {
     let format = parse_format(opts.format.as_deref())?;
-    let core_opts = compress_options(opts, format, registry.register(job_id.clone()));
+    let core_opts = compress_options(
+        opts,
+        format,
+        registry.register_for(job_id.clone(), window.label()),
+    );
     let input_paths: Vec<std::path::PathBuf> =
         inputs.into_iter().map(std::path::PathBuf::from).collect();
     let output_path = std::path::PathBuf::from(output);
@@ -702,9 +712,14 @@ pub async fn extract(
     opts: ExtractOpts,
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
+    window: tauri::WebviewWindow,
 ) -> Result<Report, IpcError> {
     let format = parse_format(opts.format.as_deref())?;
-    let core_opts = extract_options(opts, format, registry.register(job_id.clone()));
+    let core_opts = extract_options(
+        opts,
+        format,
+        registry.register_for(job_id.clone(), window.label()),
+    );
     let input_path = std::path::PathBuf::from(input);
     let dest_path = std::path::PathBuf::from(dest);
 
@@ -733,9 +748,14 @@ pub async fn add_to_archive(
     opts: AddOpts,
     channel: tauri::ipc::Channel<ProgressEvent>,
     registry: tauri::State<'_, JobRegistry>,
+    window: tauri::WebviewWindow,
 ) -> Result<Report, IpcError> {
     let archive_path = std::path::PathBuf::from(archive);
-    let core_opts = add_options(&archive_path, opts, registry.register(job_id.clone()));
+    let core_opts = add_options(
+        &archive_path,
+        opts,
+        registry.register_for(job_id.clone(), window.label()),
+    );
     let input_paths: Vec<std::path::PathBuf> =
         inputs.into_iter().map(std::path::PathBuf::from).collect();
 

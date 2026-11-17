@@ -25,7 +25,8 @@ pub type JobId = String;
 /// [`finish`]: JobRegistry::finish
 #[derive(Default)]
 pub struct JobRegistry {
-    inner: Mutex<HashMap<JobId, CancelToken>>,
+    /// Each job's token and the window that started it (empty when none).
+    inner: Mutex<HashMap<JobId, (CancelToken, String)>>,
 }
 
 impl JobRegistry {
@@ -42,13 +43,28 @@ impl JobRegistry {
     ///
     /// [`cancel`]: JobRegistry::cancel
     pub fn register(&self, id: JobId) -> CancelToken {
+        self.register_for(id, "")
+    }
+
+    /// Like [`register`](Self::register), recording the window (`owner`
+    /// label) that started the job so [`cancel_owned_by`](Self::cancel_owned_by)
+    /// can stop just that window's jobs when it closes.
+    pub fn register_for(&self, id: JobId, owner: &str) -> CancelToken {
         let token = CancelToken::default();
         let worker_clone = token.clone();
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(id, token);
+            .insert(id, (token, owner.to_owned()));
         worker_clone
+    }
+
+    /// Cancel every job started by window `owner`.
+    pub fn cancel_owned_by(&self, owner: &str) {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        for (token, _) in guard.values().filter(|(_, o)| o == owner) {
+            token.cancel();
+        }
     }
 
     /// Cancel the job identified by `id`.
@@ -62,7 +78,7 @@ impl JobRegistry {
     /// [`finish`]: JobRegistry::finish
     pub fn cancel(&self, id: &str) -> bool {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(token) = guard.get(id) {
+        if let Some((token, _)) = guard.get(id) {
             token.cancel();
             true
         } else {
@@ -90,7 +106,7 @@ impl JobRegistry {
     /// [`finish`]: JobRegistry::finish
     pub fn cancel_all(&self) {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        for token in guard.values() {
+        for (token, _) in guard.values() {
             token.cancel();
         }
     }
@@ -155,6 +171,16 @@ mod tests {
         assert!(t1.is_cancelled(), "token a must be cancelled");
         assert!(t2.is_cancelled(), "token b must be cancelled");
         assert!(t3.is_cancelled(), "token c must be cancelled");
+    }
+
+    #[test]
+    fn cancel_owned_by_only_trips_that_windows_jobs() {
+        let registry = JobRegistry::default();
+        let a = registry.register_for("a".into(), "main");
+        let b = registry.register_for("b".into(), "main-2");
+        registry.cancel_owned_by("main");
+        assert!(a.is_cancelled());
+        assert!(!b.is_cancelled());
     }
 
     #[test]

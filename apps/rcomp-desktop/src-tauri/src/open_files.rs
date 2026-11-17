@@ -14,19 +14,18 @@
 //!   (see [`requests_from_args`]).
 //!
 //! All of them funnel through [`dispatch`]: compress / decompress requests run
-//! in the background without a window (see `background.rs`); open requests show
-//! the main window and go to the frontend through [`deliver`]. Requests that arrive before the
-//! frontend is ready are buffered in [`OpenPaths`]; the frontend drains them
-//! once on startup via [`get_launch_requests`] (which also flips the "ready"
-//! flag), after which later deliveries are emitted live on the
-//! `launch-request` event.
+//! in the background without a window (see `background.rs`); each file to open
+//! goes to its own window (an empty one, or a new one — see
+//! `window::for_open`) through [`deliver`]. Requests that arrive before that
+//! window's frontend is ready are buffered per window in [`OpenPaths`]; the
+//! frontend drains them once on startup via [`get_launch_requests`] (which
+//! also marks the window ready), after which later deliveries are emitted live
+//! to that window on the `launch-request` event.
 
 use std::{
+    collections::{HashMap, HashSet},
     path::Path,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Mutex, MutexGuard},
 };
 
 use tauri::{AppHandle, Emitter as _, Manager as _};
@@ -60,34 +59,51 @@ pub struct LaunchRequest {
     pub paths: Vec<String>,
 }
 
-/// Buffer + readiness flag for OS-delivered requests.
+/// Per-window buffer + readiness flags for OS-delivered requests.
 ///
-/// Registered as Tauri managed state.  Before the frontend calls
-/// [`get_launch_requests`], delivered requests accumulate in `pending`;
-/// afterwards they are emitted live (see [`deliver`]).
+/// Registered as Tauri managed state.  Before a window's frontend calls
+/// [`get_launch_requests`], requests for it accumulate here; afterwards they
+/// are emitted live to that window (see [`deliver`]).
 #[derive(Default)]
 pub struct OpenPaths {
-    pending: Mutex<Vec<LaunchRequest>>,
-    ready: AtomicBool,
+    inner: Mutex<Buffers>,
+}
+
+#[derive(Default)]
+struct Buffers {
+    pending: HashMap<String, Vec<LaunchRequest>>,
+    ready: HashSet<String>,
 }
 
 impl OpenPaths {
-    /// Buffer `request` for the frontend to drain on startup.
-    pub fn push(&self, request: LaunchRequest) {
-        let mut guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(request);
+    fn lock(&self) -> MutexGuard<'_, Buffers> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Mark the frontend ready and return (clearing) any buffered requests.
-    pub fn take_and_ready(&self) -> Vec<LaunchRequest> {
-        self.ready.store(true, Ordering::SeqCst);
-        let mut guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *guard)
+    /// Buffer `request` for window `label` unless that window is ready, in
+    /// which case the request is handed back to be emitted live.  One lock
+    /// covers both, so a request can't slip in after the window drained.
+    pub fn push_unless_ready(&self, label: &str, request: LaunchRequest) -> Option<LaunchRequest> {
+        let mut b = self.lock();
+        if b.ready.contains(label) {
+            return Some(request);
+        }
+        b.pending.entry(label.to_owned()).or_default().push(request);
+        None
     }
 
-    /// Whether the frontend has drained startup requests and can receive live events.
-    pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::SeqCst)
+    /// Mark window `label` ready and return (clearing) its buffered requests.
+    pub fn take_and_ready(&self, label: &str) -> Vec<LaunchRequest> {
+        let mut b = self.lock();
+        b.ready.insert(label.to_owned());
+        b.pending.remove(label).unwrap_or_default()
+    }
+
+    /// Forget a window that was closed.
+    pub fn forget(&self, label: &str) {
+        let mut b = self.lock();
+        b.ready.remove(label);
+        b.pending.remove(label);
     }
 }
 
@@ -139,15 +155,24 @@ pub fn requests_from_args<I: IntoIterator<Item = String>>(
 }
 
 /// Route an OS request: context-menu actions run in the background with no
-/// window; "Open with" shows the main window and hands the files to it.
+/// window; each file to open goes to its own window.
 pub fn dispatch(app: &AppHandle, request: LaunchRequest) {
     if request.paths.is_empty() {
         return;
     }
     match request.action {
         LaunchAction::Open => {
-            crate::window::show(app);
-            deliver(app, request);
+            for path in request.paths {
+                let label = crate::window::for_open(app);
+                deliver(
+                    app,
+                    &label,
+                    LaunchRequest {
+                        action: LaunchAction::Open,
+                        paths: vec![path],
+                    },
+                );
+            }
         }
         LaunchAction::Compress | LaunchAction::Decompress => {
             crate::background::submit(app, request);
@@ -155,16 +180,14 @@ pub fn dispatch(app: &AppHandle, request: LaunchRequest) {
     }
 }
 
-/// Deliver `request` to the frontend: emit live when ready, else buffer it.
-pub fn deliver(app: &AppHandle, request: LaunchRequest) {
+/// Deliver `request` to window `label`: emit live when it is ready, else
+/// buffer it.
+pub fn deliver(app: &AppHandle, label: &str, request: LaunchRequest) {
     if request.paths.is_empty() {
         return;
     }
-    let state = app.state::<OpenPaths>();
-    if state.is_ready() {
-        let _ = app.emit(LAUNCH_REQUEST_EVENT, request);
-    } else {
-        state.push(request);
+    if let Some(request) = app.state::<OpenPaths>().push_unless_ready(label, request) {
+        let _ = app.emit_to(label, LAUNCH_REQUEST_EVENT, request);
     }
 }
 
@@ -174,8 +197,11 @@ pub fn deliver(app: &AppHandle, request: LaunchRequest) {
 /// Called once by the frontend on startup.  Returns an empty vector when the
 /// app was launched normally (no associated files).
 #[tauri::command]
-pub fn get_launch_requests(state: tauri::State<'_, OpenPaths>) -> Vec<LaunchRequest> {
-    state.take_and_ready()
+pub fn get_launch_requests(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, OpenPaths>,
+) -> Vec<LaunchRequest> {
+    state.take_and_ready(window.label())
 }
 
 /// Convert macOS file URLs into existing on-disk file paths.

@@ -45,7 +45,9 @@ window to bundle them into a new one. While an archive is open:
 
 Hidden entries (dotfiles, macOS `__MACOSX` folders, Windows `Thumbs.db`) are
 left out of the list unless **Settings → Hidden Files** is set to Show;
-extracting always includes them.
+extracting always includes them. Each archive you open from the file manager
+gets its own window, and **File → New Window** opens another, so several
+archives can be open or in progress at once.
 
 **File-manager integration.** Right-click files to get **Compress with Rcomp**
 or, on archives, **Decompress with Rcomp**:

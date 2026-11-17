@@ -37,6 +37,7 @@
     listEntries,
     getLaunchRequests,
     saveBackgroundPreferences,
+    setWindowIdle,
     onLaunchRequest,
     onShowChangelog,
     onMenuOpenArchive,
@@ -103,6 +104,16 @@
     acceleration = next;
     saveAcceleration(next);
   }
+
+  // Report whether this window is empty, so the backend can send the next
+  // "Open with" file here instead of opening another window. Only after the
+  // files this window was opened for have been handled, or it would look
+  // empty for a moment.
+  let launchDrained = $state(false);
+  $effect(() => {
+    if (!launchDrained) return;
+    void setWindowIdle(mode === "empty" && !run).catch(() => {});
+  });
 
   let showHidden = $state(loadShowHidden());
 
@@ -598,6 +609,7 @@
     // Drain any requests the app was launched with (also flips the backend's
     // "ready" flag so subsequent deliveries arrive via the event above).
     for (const req of await getLaunchRequests()) await handleLaunchRequest(req);
+    launchDrained = true;
   });
 
   onDestroy(() => {

@@ -9,7 +9,8 @@
 //!   the workspace's open/new/extract/compress/close actions.
 //! - **Edit** — also located by text: find and cancel-job.
 //!
-//! Every File/Edit item (and the changelog item) emits an event for the
+//! **File → New Window** opens another window.  Every other File/Edit item
+//! (and the changelog item) emits an event to the focused window for its
 //! frontend to act on rather than calling into it directly; each interested
 //! component subscribes to its own event and no-ops when the action doesn't
 //! currently apply (e.g. "Extract Now" while no archive is open), so these
@@ -17,7 +18,7 @@
 //! frontend just to grey them out.
 
 use tauri::{
-    AppHandle, Emitter as _, Runtime,
+    AppHandle, Emitter as _, Runtime, Wry,
     menu::{HELP_SUBMENU_ID, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
 };
 use tauri_plugin_opener::OpenerExt as _;
@@ -60,6 +61,7 @@ const COMPRESS_ITEM_ID: &str = "file-compress";
 const CLOSE_ARCHIVE_ITEM_ID: &str = "file-close-archive";
 const FIND_ITEM_ID: &str = "edit-find";
 const CANCEL_JOB_ITEM_ID: &str = "edit-cancel-job";
+const NEW_WINDOW_ITEM_ID: &str = "file-new-window";
 
 /// Build the app menu: Tauri's platform default, plus rcomp's Help links and
 /// changelog viewer, and its File/Edit workspace actions.
@@ -96,6 +98,14 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     if let Some(file) = find_submenu(&menu, "File")? {
         file.prepend_items(&[
+            &MenuItem::with_id(
+                app,
+                NEW_WINDOW_ITEM_ID,
+                "New Window",
+                true,
+                Some("CmdOrCtrl+Shift+N"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(
                 app,
                 NEW_ARCHIVE_FILES_ITEM_ID,
@@ -169,29 +179,47 @@ fn find_submenu<R: Runtime>(menu: &Menu<R>, text: &str) -> tauri::Result<Option<
 ///
 /// Unrecognised ids (every other default menu item) are ignored — Tauri's
 /// predefined items (quit, undo, etc.) handle themselves natively.
-pub fn handle_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
+pub fn handle_event(app: &AppHandle<Wry>, event: MenuEvent) {
     let id = event.id();
     if id == REPOSITORY_ITEM_ID {
         let _ = app.opener().open_url(REPOSITORY_URL, None::<&str>);
-    } else if id == WEBSITE_ITEM_ID {
+        return;
+    }
+    if id == WEBSITE_ITEM_ID {
         let _ = app.opener().open_url(WEBSITE_URL, None::<&str>);
-    } else if id == CHANGELOG_ITEM_ID {
-        let _ = app.emit(SHOW_CHANGELOG_EVENT, ());
+        return;
+    }
+    if id == NEW_WINDOW_ITEM_ID {
+        crate::window::new_window(app);
+        return;
+    }
+    let event = if id == CHANGELOG_ITEM_ID {
+        SHOW_CHANGELOG_EVENT
     } else if id == OPEN_ARCHIVE_ITEM_ID {
-        let _ = app.emit(OPEN_ARCHIVE_EVENT, ());
+        OPEN_ARCHIVE_EVENT
     } else if id == NEW_ARCHIVE_FILES_ITEM_ID {
-        let _ = app.emit(NEW_ARCHIVE_FILES_EVENT, ());
+        NEW_ARCHIVE_FILES_EVENT
     } else if id == NEW_ARCHIVE_FOLDER_ITEM_ID {
-        let _ = app.emit(NEW_ARCHIVE_FOLDER_EVENT, ());
+        NEW_ARCHIVE_FOLDER_EVENT
     } else if id == EXTRACT_NOW_ITEM_ID {
-        let _ = app.emit(EXTRACT_NOW_EVENT, ());
+        EXTRACT_NOW_EVENT
     } else if id == COMPRESS_ITEM_ID {
-        let _ = app.emit(COMPRESS_EVENT, ());
+        COMPRESS_EVENT
     } else if id == CLOSE_ARCHIVE_ITEM_ID {
-        let _ = app.emit(CLOSE_ARCHIVE_EVENT, ());
+        CLOSE_ARCHIVE_EVENT
     } else if id == FIND_ITEM_ID {
-        let _ = app.emit(FIND_EVENT, ());
+        FIND_EVENT
     } else if id == CANCEL_JOB_ITEM_ID {
-        let _ = app.emit(CANCEL_JOB_EVENT, ());
+        CANCEL_JOB_EVENT
+    } else {
+        return;
+    };
+    // Only the focused window acts; with no window (macOS keeps the menu bar
+    // while a background job runs), show one instead.
+    match crate::window::focused(app) {
+        Some(window) => {
+            let _ = app.emit_to(window.label(), event, ());
+        }
+        None => crate::window::show(app),
     }
 }
