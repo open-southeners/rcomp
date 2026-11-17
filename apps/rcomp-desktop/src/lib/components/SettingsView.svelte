@@ -23,6 +23,9 @@
     onChangeDefaultFormat: (format: string | null) => void;
     acceleration: AccelerationPreference;
     onChangeAcceleration: (value: AccelerationPreference) => void;
+    /** Whether archive listings include hidden entries. */
+    showHidden: boolean;
+    onChangeShowHidden: (value: boolean) => void;
     onClose: () => void;
   }
 
@@ -33,6 +36,8 @@
     onChangeDefaultFormat,
     acceleration,
     onChangeAcceleration,
+    showHidden,
+    onChangeShowHidden,
     onClose,
   }: Props = $props();
 
@@ -139,6 +144,21 @@
       <option value="cpu">CPU only</option>
       <option value="required">Require GPU</option>
     </select>
+  </div>
+
+  <div class="setting-row">
+    <div class="setting-copy">
+      <span class="setting-label">Hidden Files</span>
+      <span class="setting-hint">Dotfiles, macOS <code>__MACOSX</code> folders and Windows <code>Thumbs.db</code> in archive listings. Extracting always includes them.</span>
+    </div>
+    <div class="segmented" role="group" aria-label="Hidden files">
+      <button class="segment" class:active={!showHidden} onclick={() => onChangeShowHidden(false)}>
+        Hide
+      </button>
+      <button class="segment" class:active={showHidden} onclick={() => onChangeShowHidden(true)}>
+        Show
+      </button>
+    </div>
   </div>
 
   {#if cli && cli.state !== "unavailable"}

@@ -43,7 +43,13 @@ final class Node {
         }
     }
 
-    var isHidden: Bool { name.hasPrefix(".") || name == "__MACOSX" }
+    /// Dotfiles, macOS's `__MACOSX` resource-fork folder and Windows's
+    /// `Thumbs.db` / `desktop.ini`; the desktop app hides the same entries.
+    var isHidden: Bool {
+        let lower = name.lowercased()
+        return name.hasPrefix(".") || name == "__MACOSX" || lower == "thumbs.db"
+            || lower == "desktop.ini"
+    }
 }
 
 enum ArchivePreview {

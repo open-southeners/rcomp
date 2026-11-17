@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **The `rcomp` command-line tool now ships with the desktop app.** On macOS and Windows, **Settings → Command-Line Tool → Add to PATH** makes it available in new terminal windows: as a `/usr/local/bin/rcomp` link on macOS (which may ask for an administrator password), or by adding the app's `bin` folder to your user `Path` on Windows. On Linux the `.deb` and `.rpm` packages install `/usr/bin/rcomp` directly, and the AppImage can copy it to `~/.local/bin`. An `rcomp` the app didn't install, for example from Homebrew, is never replaced.
+- **Hidden files are hidden** in the desktop app's archive listing by default, as in the Quick Look preview: dotfiles such as `.DS_Store`, macOS `__MACOSX` folders and Windows `Thumbs.db`/`desktop.ini`. **Settings → Hidden Files** shows them. Extracting still writes every entry.
 
 ### Changed
 
@@ -27,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `--accelerator required` errors now say why the operation could not run: an `--accelerator-device` ID that matches nothing is reported as not found, and a present device names what it lacks (for example, LZ4 encoding only at the `Fast` level). The error no longer implies the CPU was used, and the CLI suggests `--accelerator auto` or `cpu` instead.
 - Desktop app on macOS: **Compress with Rcomp** and **Decompress with Rcomp** from Finder's Quick Actions now receive the selected files. Previously the app opened (or came to the front) but ignored the selection.
 - macOS: `.zst`, `.tar.zst`, `.tzst`, `.br` and `.tar.br` files now get the Quick Look preview and the **Decompress with Rcomp** Quick Action, like other archives. macOS has no file type for these extensions, so Rcomp now declares them.
-- The Quick Look preview's **Show hidden items** checkbox now shows a checkmark when it is on, instead of a filled square.
+- The Quick Look preview's **Show hidden items** checkbox now shows a checkmark when it is on, instead of a filled square, and also treats `Thumbs.db` and `desktop.ini` as hidden.
 
 ## [0.4.0] - 2026-10-14
 

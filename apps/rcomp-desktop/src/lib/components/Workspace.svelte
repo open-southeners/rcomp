@@ -53,6 +53,10 @@
     loadDefaultFormat,
     saveAcceleration,
     saveDefaultFormat,
+    loadShowHidden,
+    saveShowHidden,
+    isHiddenEntry,
+    SHOW_HIDDEN_KEY,
   } from "../preferences";
   import type { AccelerationPreference } from "../preferences";
   import { humanBytes } from "../types";
@@ -99,6 +103,22 @@
     acceleration = next;
     saveAcceleration(next);
   }
+
+  let showHidden = $state(loadShowHidden());
+
+  function setShowHidden(next: boolean): void {
+    showHidden = next;
+    saveShowHidden(next);
+  }
+
+  // Other windows share localStorage; follow a change made in one of them.
+  $effect(() => {
+    const onStorage = (e: StorageEvent): void => {
+      if (e.key === SHOW_HIDDEN_KEY) showHidden = loadShowHidden();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  });
 
   // Context-menu actions run in the backend without this window, so hand it
   // the same defaults.
@@ -148,7 +168,7 @@
   // --- rows for the always-visible list ---
   const rows = $derived<FileRow[]>(
     mode === "open"
-      ? entries.map((e) => ({
+      ? (showHidden ? entries : entries.filter((e) => !isHiddenEntry(e.path))).map((e) => ({
           key: e.path,
           name: e.path,
           size: e.size,
@@ -617,6 +637,8 @@
         onChange={setAppearance}
         defaultFormat={defaultFormatPref}
         onChangeDefaultFormat={setDefaultFormatPref}
+        {showHidden}
+        onChangeShowHidden={setShowHidden}
         {acceleration}
         onChangeAcceleration={setAcceleration}
         onClose={() => (showSettings = false)}

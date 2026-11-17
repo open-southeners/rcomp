@@ -43,6 +43,10 @@ window to bundle them into a new one. While an archive is open:
   in once complete, so large archives take a moment. RAR archives and single
   compressed files (`notes.txt.gz`) can't be added to.
 
+Hidden entries (dotfiles, macOS `__MACOSX` folders, Windows `Thumbs.db`) are
+left out of the list unless **Settings → Hidden Files** is set to Show;
+extracting always includes them.
+
 **File-manager integration.** Right-click files to get **Compress with Rcomp**
 or, on archives, **Decompress with Rcomp**:
 
